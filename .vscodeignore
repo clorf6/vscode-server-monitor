@@ -1,0 +1,12 @@
+**
+!dist/extension.js
+!dist/webview.js
+!dist/overview.js
+!media/**
+!l10n/**
+!package.json
+!package.nls.json
+!package.nls.zh-cn.json
+!README.md
+!CHANGELOG.md
+!LICENSE

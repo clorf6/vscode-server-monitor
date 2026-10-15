@@ -1,0 +1,607 @@
+/* Server Monitor dashboard. Colors come from VS Code theme tokens; series colors switch with the body theme class. */
+
+body {
+  /* series colors (validated, CVD-safe pair) */
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --bg: var(--vscode-editor-background);
+  --card: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  --bd: var(--vscode-editorWidget-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.3)));
+  --fg: var(--vscode-foreground);
+  --mut: var(--vscode-descriptionForeground);
+  /* status colors: usage meters and badges only, always next to a text label */
+  --ok: var(--vscode-charts-green, #388a34);
+  --warn: var(--vscode-charts-yellow, #bf8803);
+  --bad: var(--vscode-charts-red, #e51400);
+  --track: color-mix(in srgb, var(--fg) 10%, transparent);
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+  line-height: 1.4;
+}
+body.vscode-dark {
+  --s1: #3987e5;
+  --s2: #d95926;
+}
+body.vscode-high-contrast,
+body.vscode-high-contrast-light {
+  --s1: var(--vscode-charts-blue);
+  --s2: var(--vscode-charts-orange);
+  --bd: var(--vscode-contrastBorder, currentColor);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+#app {
+  max-width: 1680px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 1. header */
+.hdr h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  padding: 1px 8px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  color: var(--mut);
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chip.conn {
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* 2. filter row */
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  background: var(--bg);
+}
+.bl {
+  color: var(--mut);
+  font-size: 12px;
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--bd);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.seg button + button {
+  border-left: 1px solid var(--bd);
+}
+.seg button[aria-pressed='true'] {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font-weight: 600;
+}
+.seg button:hover:not([aria-pressed='true']) {
+  background: var(--vscode-toolbar-hoverBackground, var(--track));
+}
+.sp {
+  flex: 1;
+}
+.btn {
+  border: 0;
+  border-radius: 3px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--vscode-button-secondaryBackground, var(--track));
+  color: var(--vscode-button-secondaryForeground, var(--fg));
+}
+.btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--track));
+}
+.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+}
+.link:hover {
+  text-decoration: underline;
+}
+button:focus-visible,
+canvas:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+/* cards */
+.card,
+.tile {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--bd);
+  border-radius: 6px;
+  background: var(--card);
+}
+.ch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+.ch h2,
+.gh h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sub,
+.note,
+.hint {
+  color: var(--mut);
+  font-size: 12px;
+}
+.note {
+  margin-top: 6px;
+  min-height: 1.4em;
+}
+canvas {
+  display: block;
+  width: 100%;
+}
+
+/* legends: line keys for lines, swatches for bars; text in text colors */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-size: 12px;
+  color: var(--mut);
+}
+.li,
+.pr,
+.tr {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.li b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.lk {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+}
+.sw {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.k1 {
+  background: var(--s1);
+}
+.k2 {
+  background: var(--s2);
+}
+.kf {
+  background: var(--track);
+}
+
+/* 3. stat tiles */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 12px;
+}
+.tl {
+  color: var(--mut);
+  font-size: 12px;
+}
+.tv {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.tv.pair {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--mut);
+}
+.pr b {
+  color: var(--fg);
+  font-size: 15px;
+  font-weight: 600;
+}
+.ts {
+  color: var(--mut);
+  font-size: 12px;
+  min-height: 1.4em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.spark {
+  margin-top: 6px;
+}
+
+/* CPU | memory, network | disk IO (and users | disks): two columns, one below ~820px */
+.grid,
+.tables {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 820px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 1100px) {
+  .tables {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.subh {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 6px;
+  color: var(--mut);
+  font-size: 12px;
+}
+
+/* 4. per-core heatmap: one hue, opacity proportional to usage over a neutral track */
+.scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ramp {
+  width: 64px;
+  height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--track), var(--s1));
+}
+.heat {
+  display: grid;
+  grid-template-columns: repeat(16, minmax(0, 1fr));
+  gap: 2px;
+}
+.cell {
+  position: relative;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--track);
+}
+.cell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--s1);
+  opacity: var(--u, 0);
+}
+.cell:hover {
+  outline: 1px solid var(--fg);
+  z-index: 1;
+}
+
+/* 5. memory */
+.stack {
+  display: flex;
+  gap: 2px;
+  height: 16px;
+  margin: 2px 0 8px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.sg {
+  flex: 1 1 0;
+  min-width: 2px;
+}
+.meterrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.ml {
+  color: var(--mut);
+}
+.mt {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.meter {
+  --m: var(--s1);
+  flex: 1;
+  min-width: 40px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--m) 22%, transparent);
+}
+.meter > div {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--m);
+}
+.meter.ok {
+  --m: var(--ok);
+}
+.meter.warn {
+  --m: var(--warn);
+}
+.meter.bad {
+  --m: var(--bad);
+}
+
+/* 7. GPUs */
+.gh {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-bottom: 8px;
+}
+.hint {
+  flex: 1;
+}
+.ggrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+}
+.gcard {
+  cursor: pointer;
+}
+.gcard:hover {
+  border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+}
+.gcard.sel {
+  border-color: var(--vscode-focusBorder);
+  box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
+}
+.gb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.gn {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 0 7px;
+  border: 1px solid var(--bd);
+  border-radius: 9px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.badge.ok {
+  border-color: var(--ok);
+}
+.badge.ok .bi {
+  color: var(--ok);
+}
+.badge.busy .bi {
+  color: var(--mut);
+}
+.gs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--mut);
+}
+.gs b {
+  display: block;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.gu {
+  margin-top: 6px;
+  color: var(--mut);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 8. tables */
+.wide {
+  grid-column: 1 / -1;
+}
+.fchip {
+  border: 1px solid var(--vscode-focusBorder);
+  border-radius: 10px;
+  padding: 0 8px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tw {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+th {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--bd);
+  color: var(--mut);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+td {
+  padding: 3px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  white-space: nowrap;
+}
+.n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+td.cmd {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+tr.me td {
+  background: var(--vscode-list-inactiveSelectionBackground, var(--track));
+}
+tr.me td:first-child {
+  box-shadow: inset 2px 0 0 var(--s1);
+}
+.empty {
+  padding: 8px;
+  color: var(--mut);
+  font-size: 12px;
+}
+.tag {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--bd);
+  border-radius: 3px;
+  color: var(--mut);
+  font-size: 11px;
+}
+.um {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 130px;
+}
+.um span {
+  width: 3.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.st .si {
+  display: inline-block;
+  width: 1.2em;
+}
+.st.ok .si {
+  color: var(--ok);
+}
+.st.bad .si {
+  color: var(--bad);
+}
+.st.mut {
+  color: var(--mut);
+}
+
+/* tooltip */
+.tip {
+  position: fixed;
+  z-index: 10;
+  max-width: 300px;
+  padding: 6px 8px;
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--bd));
+  border-radius: 4px;
+  background: var(--vscode-editorHoverWidget-background, var(--card));
+  color: var(--vscode-editorHoverWidget-foreground, var(--fg));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+  font-size: 12px;
+  pointer-events: none;
+}
+.th {
+  margin-bottom: 2px;
+  color: var(--mut);
+}
+.tr {
+  display: flex;
+}
+.tr b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tr span:last-child {
+  color: var(--mut);
+}
+
+@media (max-width: 480px) {
+  body {
+    padding: 10px;
+  }
+  .tv {
+    font-size: 22px;
+  }
+}

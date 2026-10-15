@@ -1,0 +1,1360 @@
+{
+  "name": "server-monitor",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "0.3.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "cuda",
+    "disk",
+    "docker",
+    "gpu",
+    "htop",
+    "monitor",
+    "nvidia",
+    "nvidia-smi",
+    "process",
+    "remote",
+    "remote-ssh",
+    "server",
+    "ssh",
+    "tmux",
+    "top",
+    "wsl",
+    "显卡",
+    "服务器",
+    "监控"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "l10n": "./l10n",
+  "activationEvents": [
+    "onStartupFinished",
+    "onWebviewPanel:serverMonitor.dashboard"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "serverMonitor",
+          "title": "%viewContainer.title%",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "serverMonitor": [
+        {
+          "type": "webview",
+          "id": "serverMonitor.overview",
+          "name": "%view.overview%",
+          "icon": "$(dashboard)",
+          "contextualTitle": "%viewContainer.title%"
+        },
+        {
+          "id": "serverMonitor.gpus",
+          "name": "%view.gpus%",
+          "icon": "$(circuit-board)",
+          "contextualTitle": "%viewContainer.title%",
+          "visibility": "collapsed",
+          "when": "config.serverMonitor.sidebar.showTreeViews"
+        },
+        {
+          "id": "serverMonitor.processes",
+          "name": "%view.processes%",
+          "icon": "$(pulse)",
+          "contextualTitle": "%viewContainer.title%",
+          "visibility": "visible",
+          "when": "config.serverMonitor.sidebar.showTreeViews"
+        },
+        {
+          "id": "serverMonitor.tmux",
+          "name": "%view.tmux%",
+          "icon": "$(terminal-tmux)",
+          "contextualTitle": "%viewContainer.title%",
+          "visibility": "visible",
+          "when": "config.serverMonitor.sidebar.showTreeViews"
+        },
+        {
+          "id": "serverMonitor.ports",
+          "name": "%view.ports%",
+          "icon": "$(plug)",
+          "contextualTitle": "%viewContainer.title%",
+          "visibility": "collapsed",
+          "when": "config.serverMonitor.sidebar.showTreeViews"
+        },
+        {
+          "id": "serverMonitor.disks",
+          "name": "%view.disks%",
+          "icon": "$(database)",
+          "contextualTitle": "%viewContainer.title%",
+          "visibility": "collapsed",
+          "when": "config.serverMonitor.sidebar.showTreeViews"
+        },
+        {
+          "id": "serverMonitor.users",
+          "name": "%view.users%",
+          "icon": "$(organization)",
+          "contextualTitle": "%viewContainer.title%",
+          "visibility": "collapsed",
+          "when": "config.serverMonitor.sidebar.showTreeViews"
+        },
+        {
+          "id": "serverMonitor.docker",
+          "name": "%view.docker%",
+          "icon": "$(package)",
+          "contextualTitle": "%viewContainer.title%",
+          "visibility": "collapsed",
+          "when": "config.serverMonitor.sidebar.showTreeViews && serverMonitor.dockerPresent"
+        },
+        {
+          "id": "serverMonitor.du",
+          "name": "%view.du%",
+          "icon": "$(folder-library)",
+          "contextualTitle": "%viewContainer.title%",
+          "visibility": "collapsed",
+          "when": "config.serverMonitor.sidebar.showTreeViews"
+        },
+        {
+          "id": "serverMonitor.watches",
+          "name": "%view.watches%",
+          "icon": "$(bell)",
+          "contextualTitle": "%viewContainer.title%",
+          "visibility": "collapsed",
+          "when": "config.serverMonitor.sidebar.showTreeViews"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "serverMonitor.tmux",
+        "contents": "%welcome.tmux%",
+        "when": "serverMonitor.tmuxInstalled"
+      },
+      {
+        "view": "serverMonitor.du",
+        "contents": "%welcome.du%"
+      },
+      {
+        "view": "serverMonitor.watches",
+        "contents": "%welcome.watches%"
+      }
+    ],
+    "commands": [
+      {
+        "command": "serverMonitor.openDashboard",
+        "title": "%command.openDashboard%",
+        "category": "%category%",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "serverMonitor.refresh",
+        "title": "%command.refresh%",
+        "category": "%category%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "serverMonitor.openSettings",
+        "title": "%command.openSettings%",
+        "category": "%category%",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "serverMonitor.copyFreeGpus",
+        "title": "%command.copyFreeGpus%",
+        "category": "%category%",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "serverMonitor.pickGpus",
+        "title": "%command.pickGpus%",
+        "category": "%category%",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "serverMonitor.watchFreeGpus",
+        "title": "%command.watchFreeGpus%",
+        "category": "%category%",
+        "icon": "$(bell)"
+      },
+      {
+        "command": "serverMonitor.proc.filter",
+        "title": "%command.proc.filter%",
+        "category": "%category%",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "serverMonitor.proc.clearFilter",
+        "title": "%command.proc.clearFilter%",
+        "category": "%category%",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "serverMonitor.proc.showAll",
+        "title": "%command.proc.showAll%",
+        "category": "%category%",
+        "icon": "$(organization)"
+      },
+      {
+        "command": "serverMonitor.proc.showMine",
+        "title": "%command.proc.showMine%",
+        "category": "%category%",
+        "icon": "$(account)"
+      },
+      {
+        "command": "serverMonitor.proc.treeOn",
+        "title": "%command.proc.treeOn%",
+        "category": "%category%",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "serverMonitor.proc.treeOff",
+        "title": "%command.proc.treeOff%",
+        "category": "%category%",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "serverMonitor.proc.sort",
+        "title": "%command.proc.sort%",
+        "category": "%category%",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "serverMonitor.proc.showMore",
+        "title": "%command.proc.showMore%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.proc.watch",
+        "title": "%command.proc.watch%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.proc.terminalAtCwd",
+        "title": "%command.proc.terminalAtCwd%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.proc.openCwd",
+        "title": "%command.proc.openCwd%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.proc.copyPid",
+        "title": "%command.proc.copyPid%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.proc.copyCmd",
+        "title": "%command.proc.copyCmd%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.proc.interrupt",
+        "title": "%command.proc.interrupt%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.proc.kill",
+        "title": "%command.proc.kill%",
+        "category": "%category%",
+        "icon": "$(close)"
+      },
+      {
+        "command": "serverMonitor.proc.kill9",
+        "title": "%command.proc.kill9%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.user.showProcesses",
+        "title": "%command.user.showProcesses%",
+        "category": "%category%",
+        "icon": "$(list-filter)"
+      },
+      {
+        "command": "serverMonitor.tmux.new",
+        "title": "%command.tmux.new%",
+        "category": "%category%",
+        "icon": "$(add)"
+      },
+      {
+        "command": "serverMonitor.tmux.attach",
+        "title": "%command.tmux.attach%",
+        "category": "%category%",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "serverMonitor.tmux.peek",
+        "title": "%command.tmux.peek%",
+        "category": "%category%",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "serverMonitor.tmux.peekTarget",
+        "title": "%command.tmux.peekTarget%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.tmux.refreshPeek",
+        "title": "%command.tmux.refreshPeek%",
+        "category": "%category%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "serverMonitor.tmux.watch",
+        "title": "%command.tmux.watch%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.tmux.rename",
+        "title": "%command.tmux.rename%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.tmux.ctrlC",
+        "title": "%command.tmux.ctrlC%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.tmux.kill",
+        "title": "%command.tmux.kill%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.port.open",
+        "title": "%command.port.open%",
+        "category": "%category%",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "serverMonitor.port.openInEditor",
+        "title": "%command.port.openInEditor%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.port.copyUrl",
+        "title": "%command.port.copyUrl%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.port.kill",
+        "title": "%command.port.kill%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.disk.refresh",
+        "title": "%command.disk.refresh%",
+        "category": "%category%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "serverMonitor.disk.terminal",
+        "title": "%command.disk.terminal%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.disk.copyPath",
+        "title": "%command.disk.copyPath%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.docker.start",
+        "title": "%command.docker.start%",
+        "category": "%category%",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "serverMonitor.docker.stop",
+        "title": "%command.docker.stop%",
+        "category": "%category%",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "serverMonitor.docker.restart",
+        "title": "%command.docker.restart%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.docker.logs",
+        "title": "%command.docker.logs%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.docker.exec",
+        "title": "%command.docker.exec%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.docker.copyId",
+        "title": "%command.docker.copyId%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.du.analyze",
+        "title": "%command.du.analyze%",
+        "category": "%category%",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "serverMonitor.du.analyzeHome",
+        "title": "%command.du.analyzeHome%",
+        "category": "%category%",
+        "icon": "$(home)"
+      },
+      {
+        "command": "serverMonitor.du.cancel",
+        "title": "%command.du.cancel%",
+        "category": "%category%",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "serverMonitor.du.rescan",
+        "title": "%command.du.rescan%",
+        "category": "%category%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "serverMonitor.du.drillInto",
+        "title": "%command.du.drillInto%",
+        "category": "%category%",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "serverMonitor.du.terminal",
+        "title": "%command.du.terminal%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.du.copyPath",
+        "title": "%command.du.copyPath%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.du.reveal",
+        "title": "%command.du.reveal%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.du.openFolder",
+        "title": "%command.du.openFolder%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.watch.remove",
+        "title": "%command.watch.remove%",
+        "category": "%category%",
+        "icon": "$(close)"
+      },
+      {
+        "command": "serverMonitor.watch.clear",
+        "title": "%command.watch.clear%",
+        "category": "%category%",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "serverMonitor.gpu.copyIndex",
+        "title": "%command.gpu.copyIndex%",
+        "category": "%category%",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "serverMonitor.du.up",
+        "title": "%command.du.up%",
+        "category": "%category%",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "serverMonitor.freeUp",
+        "title": "%command.freeUp%",
+        "category": "%category%",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "serverMonitor.locate",
+        "title": "%command.locate%",
+        "category": "%category%"
+      },
+      {
+        "command": "serverMonitor.quickCommands.run",
+        "title": "%command.quickCommands.run%",
+        "category": "%category%",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "serverMonitor.quickCommands.add",
+        "title": "%command.quickCommands.add%",
+        "category": "%category%",
+        "icon": "$(add)"
+      },
+      {
+        "command": "serverMonitor.quickCommands.remove",
+        "title": "%command.quickCommands.remove%",
+        "category": "%category%",
+        "icon": "$(close)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "serverMonitor.proc.showMore",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.proc.watch",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.proc.terminalAtCwd",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.proc.openCwd",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.proc.copyPid",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.proc.copyCmd",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.proc.interrupt",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.proc.kill",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.proc.kill9",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.user.showProcesses",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.tmux.attach",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.tmux.peek",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.tmux.peekTarget",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.tmux.watch",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.tmux.rename",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.tmux.ctrlC",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.tmux.kill",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.port.open",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.port.openInEditor",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.port.copyUrl",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.port.kill",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.disk.terminal",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.disk.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.docker.start",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.docker.stop",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.docker.restart",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.docker.logs",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.docker.exec",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.docker.copyId",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.du.drillInto",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.du.terminal",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.du.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.du.reveal",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.du.openFolder",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.watch.remove",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.proc.clearFilter",
+          "when": "serverMonitor.procFiltered"
+        },
+        {
+          "command": "serverMonitor.proc.showAll",
+          "when": "serverMonitor.procScope == mine"
+        },
+        {
+          "command": "serverMonitor.proc.showMine",
+          "when": "serverMonitor.procScope == all"
+        },
+        {
+          "command": "serverMonitor.proc.treeOn",
+          "when": "!serverMonitor.procTree"
+        },
+        {
+          "command": "serverMonitor.proc.treeOff",
+          "when": "serverMonitor.procTree"
+        },
+        {
+          "command": "serverMonitor.tmux.new",
+          "when": "serverMonitor.tmuxInstalled"
+        },
+        {
+          "command": "serverMonitor.tmux.refreshPeek",
+          "when": "resourceScheme == servermon-tmux"
+        },
+        {
+          "command": "serverMonitor.du.cancel",
+          "when": "serverMonitor.duScanning"
+        },
+        {
+          "command": "serverMonitor.du.rescan",
+          "when": "view.serverMonitor.du.visible"
+        },
+        {
+          "command": "serverMonitor.gpu.copyIndex",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.locate",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.quickCommands.remove",
+          "when": "false"
+        },
+        {
+          "command": "serverMonitor.du.up",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "serverMonitor.pickGpus",
+          "when": "view == serverMonitor.gpus",
+          "group": "navigation@1"
+        },
+        {
+          "command": "serverMonitor.copyFreeGpus",
+          "when": "view == serverMonitor.gpus",
+          "group": "navigation@2"
+        },
+        {
+          "command": "serverMonitor.watchFreeGpus",
+          "when": "view == serverMonitor.gpus",
+          "group": "navigation@3"
+        },
+        {
+          "command": "serverMonitor.openDashboard",
+          "when": "view == serverMonitor.gpus",
+          "group": "navigation@9"
+        },
+        {
+          "command": "serverMonitor.proc.filter",
+          "when": "view == serverMonitor.processes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "serverMonitor.proc.clearFilter",
+          "when": "view == serverMonitor.processes && serverMonitor.procFiltered",
+          "group": "navigation@2"
+        },
+        {
+          "command": "serverMonitor.proc.showAll",
+          "when": "view == serverMonitor.processes && serverMonitor.procScope == mine",
+          "group": "navigation@3"
+        },
+        {
+          "command": "serverMonitor.proc.showMine",
+          "when": "view == serverMonitor.processes && serverMonitor.procScope == all",
+          "group": "navigation@3"
+        },
+        {
+          "command": "serverMonitor.proc.treeOn",
+          "when": "view == serverMonitor.processes && !serverMonitor.procTree",
+          "group": "navigation@4"
+        },
+        {
+          "command": "serverMonitor.proc.treeOff",
+          "when": "view == serverMonitor.processes && serverMonitor.procTree",
+          "group": "navigation@4"
+        },
+        {
+          "command": "serverMonitor.proc.sort",
+          "when": "view == serverMonitor.processes",
+          "group": "navigation@5"
+        },
+        {
+          "command": "serverMonitor.tmux.new",
+          "when": "view == serverMonitor.tmux && serverMonitor.tmuxInstalled",
+          "group": "navigation@1"
+        },
+        {
+          "command": "serverMonitor.du.analyzeHome",
+          "when": "view == serverMonitor.disks",
+          "group": "1_du@1"
+        },
+        {
+          "command": "serverMonitor.disk.refresh",
+          "when": "view == serverMonitor.disks",
+          "group": "navigation@1"
+        },
+        {
+          "command": "serverMonitor.du.analyze",
+          "when": "view == serverMonitor.du",
+          "group": "navigation@1"
+        },
+        {
+          "command": "serverMonitor.du.cancel",
+          "when": "view == serverMonitor.du && serverMonitor.duScanning",
+          "group": "navigation@2"
+        },
+        {
+          "command": "serverMonitor.du.rescan",
+          "when": "view == serverMonitor.du && !serverMonitor.duScanning",
+          "group": "navigation@3"
+        },
+        {
+          "command": "serverMonitor.du.analyzeHome",
+          "when": "view == serverMonitor.du",
+          "group": "1_du@1"
+        },
+        {
+          "command": "serverMonitor.watchFreeGpus",
+          "when": "view == serverMonitor.watches",
+          "group": "1_watch@1"
+        },
+        {
+          "command": "serverMonitor.watch.clear",
+          "when": "view == serverMonitor.watches",
+          "group": "navigation@1"
+        },
+        {
+          "command": "serverMonitor.openDashboard",
+          "when": "view =~ /^serverMonitor\\./ && view != serverMonitor.gpus",
+          "group": "9_global@1"
+        },
+        {
+          "command": "serverMonitor.refresh",
+          "when": "view =~ /^serverMonitor\\.(gpus|processes|tmux|ports|disks|users|docker)$/",
+          "group": "9_global@2"
+        },
+        {
+          "command": "serverMonitor.openSettings",
+          "when": "view =~ /^serverMonitor\\./",
+          "group": "9_global@3"
+        },
+        {
+          "command": "serverMonitor.du.up",
+          "when": "view == serverMonitor.du && serverMonitor.duHasParent",
+          "group": "navigation@0"
+        },
+        {
+          "command": "serverMonitor.freeUp",
+          "when": "view == serverMonitor.processes",
+          "group": "2_free@1"
+        },
+        {
+          "command": "serverMonitor.quickCommands.run",
+          "when": "view == serverMonitor.overview",
+          "group": "2_tools@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "serverMonitor.proc.kill",
+          "when": "viewItem == proc.mine",
+          "group": "inline@9"
+        },
+        {
+          "command": "serverMonitor.proc.watch",
+          "when": "viewItem =~ /^proc\\./",
+          "group": "1_watch@1"
+        },
+        {
+          "command": "serverMonitor.proc.terminalAtCwd",
+          "when": "viewItem == proc.mine",
+          "group": "2_open@1"
+        },
+        {
+          "command": "serverMonitor.proc.openCwd",
+          "when": "viewItem == proc.mine",
+          "group": "2_open@2"
+        },
+        {
+          "command": "serverMonitor.proc.copyPid",
+          "when": "viewItem =~ /^proc\\./",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "serverMonitor.proc.copyCmd",
+          "when": "viewItem =~ /^proc\\./",
+          "group": "3_copy@2"
+        },
+        {
+          "command": "serverMonitor.proc.interrupt",
+          "when": "viewItem == proc.mine",
+          "group": "9_signal@1"
+        },
+        {
+          "command": "serverMonitor.proc.kill",
+          "when": "viewItem == proc.mine",
+          "group": "9_signal@2"
+        },
+        {
+          "command": "serverMonitor.proc.kill9",
+          "when": "viewItem == proc.mine",
+          "group": "9_signal@3"
+        },
+        {
+          "command": "serverMonitor.user.showProcesses",
+          "when": "viewItem == user",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverMonitor.user.showProcesses",
+          "when": "viewItem == user",
+          "group": "1_open@1"
+        },
+        {
+          "command": "serverMonitor.tmux.peek",
+          "when": "viewItem =~ /^tmux(Pane|Window)/",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverMonitor.tmux.attach",
+          "when": "viewItem =~ /^tmux/",
+          "group": "inline@2"
+        },
+        {
+          "command": "serverMonitor.tmux.attach",
+          "when": "viewItem =~ /^tmux/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "serverMonitor.tmux.peek",
+          "when": "viewItem =~ /^tmux(Pane|Window)/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "serverMonitor.tmux.watch",
+          "when": "viewItem == tmuxPane.busy",
+          "group": "2_watch@1"
+        },
+        {
+          "command": "serverMonitor.tmux.rename",
+          "when": "viewItem == tmuxSession",
+          "group": "3_edit@1"
+        },
+        {
+          "command": "serverMonitor.tmux.ctrlC",
+          "when": "viewItem == tmuxPane.busy",
+          "group": "9_destructive@1"
+        },
+        {
+          "command": "serverMonitor.tmux.kill",
+          "when": "viewItem =~ /^tmux/",
+          "group": "9_destructive@2"
+        },
+        {
+          "command": "serverMonitor.port.open",
+          "when": "viewItem =~ /^port/",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverMonitor.port.open",
+          "when": "viewItem =~ /^port/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "serverMonitor.port.openInEditor",
+          "when": "viewItem =~ /^port/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "serverMonitor.port.copyUrl",
+          "when": "viewItem =~ /^port/",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "serverMonitor.port.kill",
+          "when": "viewItem == port.mine",
+          "group": "9_destructive@1"
+        },
+        {
+          "command": "serverMonitor.du.analyze",
+          "when": "viewItem == mount",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverMonitor.du.analyze",
+          "when": "viewItem == mount",
+          "group": "1_analyze@1"
+        },
+        {
+          "command": "serverMonitor.disk.terminal",
+          "when": "viewItem == mount",
+          "group": "2_open@1"
+        },
+        {
+          "command": "serverMonitor.disk.copyPath",
+          "when": "viewItem == mount",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "serverMonitor.docker.stop",
+          "when": "viewItem == container.running",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverMonitor.docker.start",
+          "when": "viewItem == container.stopped",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverMonitor.docker.logs",
+          "when": "viewItem =~ /^container\\./",
+          "group": "1_open@1"
+        },
+        {
+          "command": "serverMonitor.docker.exec",
+          "when": "viewItem == container.running",
+          "group": "1_open@2"
+        },
+        {
+          "command": "serverMonitor.docker.start",
+          "when": "viewItem == container.stopped",
+          "group": "2_state@1"
+        },
+        {
+          "command": "serverMonitor.docker.restart",
+          "when": "viewItem == container.running",
+          "group": "2_state@2"
+        },
+        {
+          "command": "serverMonitor.docker.stop",
+          "when": "viewItem == container.running",
+          "group": "2_state@3"
+        },
+        {
+          "command": "serverMonitor.docker.copyId",
+          "when": "viewItem =~ /^container\\./",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "serverMonitor.du.drillInto",
+          "when": "viewItem == duDir",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverMonitor.du.drillInto",
+          "when": "viewItem == duDir",
+          "group": "1_analyze@1"
+        },
+        {
+          "command": "serverMonitor.du.rescan",
+          "when": "viewItem == duDir",
+          "group": "1_analyze@2"
+        },
+        {
+          "command": "serverMonitor.du.terminal",
+          "when": "viewItem =~ /^du(Dir|File)$/",
+          "group": "2_open@1"
+        },
+        {
+          "command": "serverMonitor.du.reveal",
+          "when": "viewItem =~ /^du(Dir|File)$/",
+          "group": "2_open@2"
+        },
+        {
+          "command": "serverMonitor.du.openFolder",
+          "when": "viewItem == duDir",
+          "group": "2_open@3"
+        },
+        {
+          "command": "serverMonitor.du.copyPath",
+          "when": "viewItem =~ /^du(Dir|File)$/",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "serverMonitor.watch.remove",
+          "when": "viewItem == watch",
+          "group": "inline@1"
+        },
+        {
+          "command": "serverMonitor.watch.remove",
+          "when": "viewItem == watch",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "serverMonitor.gpu.copyIndex",
+          "when": "view == serverMonitor.gpus && viewItem =~ /^gpu/",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "serverMonitor.gpu.copyIndex",
+          "when": "view == serverMonitor.gpus && viewItem == gpu.free",
+          "group": "inline"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "serverMonitor.du.analyze",
+          "when": "explorerResourceIsFolder",
+          "group": "4_search@99"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "serverMonitor.tmux.refreshPeek",
+          "when": "resourceScheme == servermon-tmux",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%config.title%",
+      "properties": {
+        "serverMonitor.refreshInterval": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 500,
+          "markdownDescription": "%config.refreshInterval%",
+          "scope": "window",
+          "order": 1
+        },
+        "serverMonitor.backgroundMode": {
+          "type": "string",
+          "enum": [
+            "slow",
+            "pause"
+          ],
+          "default": "slow",
+          "enumDescriptions": [
+            "%config.backgroundMode.slow%",
+            "%config.backgroundMode.pause%"
+          ],
+          "markdownDescription": "%config.backgroundMode%",
+          "scope": "window",
+          "order": 2
+        },
+        "serverMonitor.backgroundInterval": {
+          "type": "number",
+          "default": 15000,
+          "minimum": 2000,
+          "markdownDescription": "%config.backgroundInterval%",
+          "scope": "window",
+          "order": 3
+        },
+        "serverMonitor.sidebar.showTreeViews": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "%config.sidebar.showTreeViews%",
+          "scope": "window",
+          "order": 5
+        },
+        "serverMonitor.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%config.statusBar.enabled%",
+          "scope": "window",
+          "order": 10
+        },
+        "serverMonitor.statusBar.items": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "cpu",
+              "mem",
+              "gpu",
+              "gpuMem",
+              "net",
+              "load",
+              "disk"
+            ],
+            "enumDescriptions": [
+              "%config.statusBar.items.cpu%",
+              "%config.statusBar.items.mem%",
+              "%config.statusBar.items.gpu%",
+              "%config.statusBar.items.gpuMem%",
+              "%config.statusBar.items.net%",
+              "%config.statusBar.items.load%",
+              "%config.statusBar.items.disk%"
+            ]
+          },
+          "uniqueItems": true,
+          "default": [
+            "cpu",
+            "mem",
+            "gpu",
+            "net"
+          ],
+          "markdownDescription": "%config.statusBar.items%",
+          "scope": "window",
+          "order": 11
+        },
+        "serverMonitor.statusBar.warnPercent": {
+          "type": "number",
+          "default": 85,
+          "minimum": 1,
+          "maximum": 100,
+          "markdownDescription": "%config.statusBar.warnPercent%",
+          "scope": "window",
+          "order": 12
+        },
+        "serverMonitor.statusBar.critPercent": {
+          "type": "number",
+          "default": 95,
+          "minimum": 1,
+          "maximum": 100,
+          "markdownDescription": "%config.statusBar.critPercent%",
+          "scope": "window",
+          "order": 13
+        },
+        "serverMonitor.gpu.freeMemoryMiB": {
+          "type": "number",
+          "default": 500,
+          "minimum": 0,
+          "markdownDescription": "%config.gpu.freeMemoryMiB%",
+          "scope": "window",
+          "order": 20
+        },
+        "serverMonitor.gpu.freeUtilPercent": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "%config.gpu.freeUtilPercent%",
+          "scope": "window",
+          "order": 21
+        },
+        "serverMonitor.alerts.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%config.alerts.enabled%",
+          "scope": "window",
+          "order": 30
+        },
+        "serverMonitor.alerts.memoryPercent": {
+          "type": "number",
+          "default": 90,
+          "minimum": 1,
+          "maximum": 100,
+          "markdownDescription": "%config.alerts.memoryPercent%",
+          "scope": "window",
+          "order": 31
+        },
+        "serverMonitor.alerts.diskPercent": {
+          "type": "number",
+          "default": 95,
+          "minimum": 1,
+          "maximum": 100,
+          "markdownDescription": "%config.alerts.diskPercent%",
+          "scope": "window",
+          "order": 32
+        },
+        "serverMonitor.processes.defaultScope": {
+          "type": "string",
+          "enum": [
+            "mine",
+            "all"
+          ],
+          "default": "mine",
+          "enumDescriptions": [
+            "%config.processes.defaultScope.mine%",
+            "%config.processes.defaultScope.all%"
+          ],
+          "markdownDescription": "%config.processes.defaultScope%",
+          "scope": "window",
+          "order": 40
+        },
+        "serverMonitor.processes.limit": {
+          "type": "number",
+          "default": 50,
+          "minimum": 5,
+          "markdownDescription": "%config.processes.limit%",
+          "scope": "window",
+          "order": 41
+        },
+        "serverMonitor.disk.excludeFsTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "%config.disk.excludeFsTypes%",
+          "scope": "machine-overridable",
+          "order": 50
+        },
+        "serverMonitor.disk.excludeMounts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "%config.disk.excludeMounts%",
+          "scope": "machine-overridable",
+          "order": 51
+        },
+        "serverMonitor.disk.networkTimeoutMs": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 500,
+          "markdownDescription": "%config.disk.networkTimeoutMs%",
+          "scope": "machine-overridable",
+          "order": 52
+        },
+        "serverMonitor.docker.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%config.docker.enabled%",
+          "scope": "machine-overridable",
+          "order": 60
+        },
+        "serverMonitor.history.minutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 60,
+          "markdownDescription": "%config.history.minutes%",
+          "scope": "window",
+          "order": 70
+        },
+        "serverMonitor.quickCommands": {
+          "type": "array",
+          "default": [
+            {
+              "name": "htop",
+              "command": "htop"
+            },
+            {
+              "name": "nvtop",
+              "command": "nvtop"
+            },
+            {
+              "name": "nvidia-smi (watch)",
+              "command": "watch -n 1 nvidia-smi"
+            }
+          ],
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "command"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "markdownDescription": "%config.quickCommands%",
+          "scope": "application",
+          "order": 80
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch --dev",
+    "typecheck": "tsc -p .",
+    "test": "node esbuild.mjs && node --test out/parsers.test.js out/scheduler.test.js",
+    "smoke": "node esbuild.mjs && node out/smoke.js",
+    "package": "npm run typecheck && node esbuild.mjs && vsce package --no-dependencies --allow-missing-repository",
+    "test:host": "esbuild test/overview-host.ts --bundle --platform=node --alias:vscode=./test/vscode-mock.ts --outfile=out/overview-host.js --log-level=warning && node out/overview-host.js",
+    "overhead": "esbuild test/overhead.ts --bundle --platform=node --alias:vscode=./test/vscode-mock.ts --outfile=out/overhead.js && node out/overhead.js"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.6",
+    "@types/vscode": "1.90.0",
+    "@vscode/vsce": "3.2.1",
+    "esbuild": "0.24.0",
+    "typescript": "5.6.3"
+  },
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#2C2678",
+    "theme": "dark"
+  }
+}

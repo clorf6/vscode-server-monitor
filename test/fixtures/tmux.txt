@@ -1,0 +1,1 @@
+bash-0	$0	0	1792043378	0	claude	1	0	%0	1117018	claude	/mnt/disk2/user1/foldserve	1	0
