@@ -1,10 +1,20 @@
-# 服务器监控 (Server Monitor)
+# GPU Server Monitor · 服务器监控
 
 **English summary:** a VS Code extension that monitors the machine your window is connected to (Remote-SSH, WSL, Tunnel, Dev Containers or local): CPU, NVIDIA GPUs, memory, disks, network, processes, tmux sessions, listening ports, per-user usage, Docker containers and folder sizes, plus watches (process exit, tmux job done, GPUs free) and memory/disk alerts. It runs on the remote host (`extensionKind: workspace`), reads `/proc` directly, keeps a single streaming `nvidia-smi`, only polls views that are visible, and slows down or pauses when the window is unfocused. Linux hosts are fully supported. The UI is localized in English and Simplified Chinese.
 
 ---
 
 在 VS Code 的侧边栏和状态栏中查看**当前连接的机器**（Remote-SSH、WSL、隧道、开发容器或本机）的运行状况，适合多人共用的 GPU 服务器。
+
+## 安装
+
+- 在 VS Code 扩展视图中搜索 **GPU Server Monitor**，或按 `Ctrl+P` 输入 `ext install clorf6.server-monitor`。
+- 扩展运行在**被监控的机器**上：在 Remote-SSH / WSL / 隧道 / 容器窗口中，点击扩展页上的“在 SSH: xxx 中安装”（或“在 WSL 中安装”），每台主机装一次。
+- 想让每台 SSH 主机自动装上，在用户设置中加入：
+
+  ```json
+  "remote.SSH.defaultExtensions": ["clorf6.server-monitor"]
+  ```
 
 ## 功能
 
@@ -53,8 +63,8 @@
 | `serverMonitor.statusBar.items` | `["cpu","mem","gpu","net"]` | 状态栏显示的指标及顺序，可选 `cpu`、`mem`、`gpu`、`gpuMem`、`net`、`load`、`disk`。 |
 | `serverMonitor.statusBar.warnPercent` | `85` | 内存或主目录磁盘达到此百分比时状态栏变黄。 |
 | `serverMonitor.statusBar.critPercent` | `95` | 达到此百分比时状态栏变红。 |
-| `serverMonitor.gpu.freeMemoryMiB` | `500` | 显存占用低于此值（MiB）…… |
-| `serverMonitor.gpu.freeUtilPercent` | `5` | ……且利用率低于此值（%）的 GPU 视为空闲。 |
+| `serverMonitor.gpu.freeUtilPercent` | `5` | 利用率低于此值（%）、且卡上没有计算进程的 GPU 视为空闲；桌面 / 浏览器占用的显存（不超过三分之一）不算占用。 |
+| `serverMonitor.gpu.freeMemoryMiB` | `500` | 无法得知卡上进程时（例如进程列表尚未加载），显存占用低于此值（MiB）才算空闲；WSL 中按此值与三分之一显存中的较大者判断。 |
 | `serverMonitor.alerts.enabled` | `true` | 是否启用内存 / 磁盘告警。 |
 | `serverMonitor.alerts.memoryPercent` | `90` | 内存告警阈值（%）。 |
 | `serverMonitor.alerts.diskPercent` | `95` | 磁盘告警阈值（%）。 |
@@ -72,13 +82,10 @@
 
 ```bash
 npm install
-npm run package        # 类型检查 + 打包，生成 server-monitor-0.3.0.vsix
+npm run package        # 类型检查 + 打包，生成 server-monitor-<版本>.vsix
 ```
 
-安装 `.vsix`：
-
-- **在 VS Code 中**：扩展视图 → 右上角 `…` → “从 VSIX 安装…”，选择生成的文件。在 Remote-SSH / WSL / 隧道 / 容器窗口中操作时，扩展会安装到**远程主机**上（它必须运行在被监控的机器上）。
-- **命令行**：`code --install-extension server-monitor-0.3.0.vsix`。在远程窗口的集成终端里执行时，同样会安装到远程主机。
+手动安装 `.vsix`：扩展视图 → 右上角 `…` → “从 VSIX 安装…”；或 `code --install-extension server-monitor-<版本>.vsix`。在远程窗口中操作时会安装到**远程主机**上。
 
 开发：`npm run watch` 持续构建，`npm test` 运行解析器测试，`npm run test:host` 用本机真实数据检查侧边栏面板各页面申请 / 释放的数据源，`node scripts/check-manifest.mjs` 检查命令、菜单与翻译是否一致。
 

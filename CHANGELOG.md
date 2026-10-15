@@ -1,5 +1,14 @@
 # 更新日志 / Changelog
 
+## 0.3.2
+
+- 首次发布到 VS Code 插件市场（`clorf6.server-monitor`，英文名 GPU Server Monitor）。从 `.vsix` 手动安装过的旧版本（`local.server-monitor`）请先卸载。
+- 新图标、MIT 许可证；README 增加安装说明。
+
+---
+
+- First Marketplace release as `clorf6.server-monitor` ("GPU Server Monitor"). Uninstall the manually installed `local.server-monitor` first.
+
 ## 0.3.1
 
 - 修复：WSL / 桌面电脑上 GPU 明明空闲却显示“0/1 空闲”、服务器猫显示“GPU 都被占满了”。空闲判定改为：利用率低且卡上没有计算进程；桌面和浏览器占用的显存（不超过三分之一）不再算作占用。WSL 无法列出进程时按同样的显存比例判断。
