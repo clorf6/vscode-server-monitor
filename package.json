@@ -1,5 +1,5 @@
 {
-  "name": "server-monitor",
+  "name": "gpu-server-monitor",
   "displayName": "%displayName%",
   "description": "%description%",
   "version": "0.3.2",
@@ -1342,7 +1342,8 @@
     "smoke": "node esbuild.mjs && node out/smoke.js",
     "package": "npm run typecheck && node esbuild.mjs && vsce package --no-dependencies --allow-missing-repository",
     "test:host": "esbuild test/overview-host.ts --bundle --platform=node --alias:vscode=./test/vscode-mock.ts --outfile=out/overview-host.js --log-level=warning && node out/overview-host.js",
-    "overhead": "esbuild test/overhead.ts --bundle --platform=node --alias:vscode=./test/vscode-mock.ts --outfile=out/overhead.js && node out/overhead.js"
+    "overhead": "esbuild test/overhead.ts --bundle --platform=node --alias:vscode=./test/vscode-mock.ts --outfile=out/overhead.js && node out/overhead.js",
+    "publish:marketplace": "bash scripts/publish.sh"
   },
   "devDependencies": {
     "@types/node": "20.17.6",

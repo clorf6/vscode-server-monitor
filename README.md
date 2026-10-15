@@ -8,12 +8,12 @@
 
 ## 安装
 
-- 在 VS Code 扩展视图中搜索 **GPU Server Monitor**，或按 `Ctrl+P` 输入 `ext install clorf6.server-monitor`。
+- 在 VS Code 扩展视图中搜索 **GPU Server Monitor**，或按 `Ctrl+P` 输入 `ext install clorf6.gpu-server-monitor`。
 - 扩展运行在**被监控的机器**上：在 Remote-SSH / WSL / 隧道 / 容器窗口中，点击扩展页上的“在 SSH: xxx 中安装”（或“在 WSL 中安装”），每台主机装一次。
 - 想让每台 SSH 主机自动装上，在用户设置中加入：
 
   ```json
-  "remote.SSH.defaultExtensions": ["clorf6.server-monitor"]
+  "remote.SSH.defaultExtensions": ["clorf6.gpu-server-monitor"]
   ```
 
 ## 功能
@@ -82,10 +82,10 @@
 
 ```bash
 npm install
-npm run package        # 类型检查 + 打包，生成 server-monitor-<版本>.vsix
+npm run package        # 类型检查 + 打包，生成 gpu-server-monitor-<版本>.vsix
 ```
 
-手动安装 `.vsix`：扩展视图 → 右上角 `…` → “从 VSIX 安装…”；或 `code --install-extension server-monitor-<版本>.vsix`。在远程窗口中操作时会安装到**远程主机**上。
+手动安装 `.vsix`：扩展视图 → 右上角 `…` → “从 VSIX 安装…”；或 `code --install-extension gpu-server-monitor-<版本>.vsix`。在远程窗口中操作时会安装到**远程主机**上。
 
 开发：`npm run watch` 持续构建，`npm test` 运行解析器测试，`npm run test:host` 用本机真实数据检查侧边栏面板各页面申请 / 释放的数据源，`node scripts/check-manifest.mjs` 检查命令、菜单与翻译是否一致。
 

@@ -2,12 +2,12 @@
 
 ## 0.3.2
 
-- 首次发布到 VS Code 插件市场（`clorf6.server-monitor`，英文名 GPU Server Monitor）。从 `.vsix` 手动安装过的旧版本（`local.server-monitor`）请先卸载。
+- 首次发布到 VS Code 插件市场（`clorf6.gpu-server-monitor`，英文名 GPU Server Monitor）。从 `.vsix` 手动安装过的旧版本（`local.server-monitor`）请先卸载。
 - 新图标、MIT 许可证；README 增加安装说明。
 
 ---
 
-- First Marketplace release as `clorf6.server-monitor` ("GPU Server Monitor"). Uninstall the manually installed `local.server-monitor` first.
+- First Marketplace release as `clorf6.gpu-server-monitor` ("GPU Server Monitor"). Uninstall the manually installed `local.server-monitor` first.
 
 ## 0.3.1
 
