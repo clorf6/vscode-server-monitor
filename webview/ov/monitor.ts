@@ -309,9 +309,13 @@ function renderMood(): void {
   if (core) {
     const cpu = num(core.cpu);
     const mem = num(core.mem.percent);
-    // "GPUs are full" only when every card is genuinely saturated — not merely "not idle".
-    const saturated = (x: { util: number | null; memUsed: number | null; memTotal: number | null }) => num(x.util) >= 80 || (num(x.memTotal) > 0 && num(x.memUsed) / num(x.memTotal) >= 0.9);
-    want = cpu >= G.cfg.warn || mem >= G.cfg.warn ? 'hot' : G.gpus?.length && G.gpus.every(saturated) ? 'gpu' : cpu < 30 && mem < 70 ? 'calm' : 'busy';
+    // GPUs count as "full" when none is free and they are working on average; "calm" needs idle GPUs too.
+    const gpus = G.gpus ?? [];
+    const utils = gpus.map((x) => num(x.util)).filter((u) => !isNaN(u));
+    const avgUtil = utils.length ? utils.reduce((a, b) => a + b, 0) / utils.length : 0;
+    const gpuFull = gpus.length > 0 && gpus.every((x) => !x.free) && avgUtil >= 50;
+    const gpuQuiet = !gpus.length || avgUtil < 30;
+    want = cpu >= G.cfg.warn || mem >= G.cfg.warn ? 'hot' : gpuFull ? 'gpu' : cpu < 30 && mem < 70 && gpuQuiet ? 'calm' : 'busy';
   }
   // switch only when two consecutive samples agree, so the cat does not flicker at a boundary
   if (want !== mood) {

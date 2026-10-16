@@ -1,5 +1,13 @@
 # 更新日志 / Changelog
 
+## 0.3.3
+
+- 服务器猫考虑 GPU：所有 GPU 都不空闲且平均利用率 ≥ 50% 时显示“GPU 都被占满了”；只有 CPU、内存和 GPU 都清闲时才“正在打盹”。
+
+---
+
+- The mood cat now takes GPU load into account: "GPUs are full" when no GPU is free and average utilization is ≥ 50%; "napping" only when CPU, memory and GPUs are all quiet.
+
 ## 0.3.2
 
 - 首次发布到 VS Code 插件市场（`clorf6.gpu-server-monitor`，英文名 GPU Server Monitor）。从 `.vsix` 手动安装过的旧版本（`local.server-monitor`）请先卸载。
