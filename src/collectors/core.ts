@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import { readProc } from '../util/procfs';
-import { CpuTimes, cpuPercent, memFromMeminfo, MemSample, parseDiskstats, parseMeminfo, parseNetDev, parseProcStat, physicalBlockDevices } from './parsers';
+import { CpuSplit, cpuSplitPercent, CpuTimes, cpuPercent, DiskCounter, DiskRate, diskRates, memFromMeminfo, MemSample, parseDiskstats, parseMeminfo, parseNetDev, parsePressure, parseProcStat, parseVmstat, physicalBlockDevices, Pressure } from './parsers';
+import { Sensors, Temps } from './sensors';
 
 export const isLinux = process.platform === 'linux';
 
@@ -17,7 +18,22 @@ export interface CoreSample {
   /** Bytes/s summed over physical disks. */
   diskRead: number;
   diskWrite: number;
+  /** Where CPU time went, % of all CPU time (from the second sample on). */
+  split?: { user: number; system: number; iowait: number; steal: number };
+  /** Per physical disk: busy %, throughput, IOPS, latency (from the second sample on). */
+  disks: DiskRate[];
+  /** Stall pressure (/proc/pressure, Linux 4.20+): % of the last 10 s that tasks waited for CPU, memory or I/O. */
+  psi?: { cpu?: Pressure; mem?: Pressure; io?: Pressure };
+  /** Swap-in / swap-out, bytes/s. */
+  swapIn: number;
+  swapOut: number;
+  /** Processes the kernel's OOM killer has killed since boot (counter; absent on kernels before 4.13). */
+  oomKills?: number;
+  temps: Temps;
 }
+
+const PAGE = 4096;
+const VMSTAT_KEYS = ['pswpin', 'pswpout', 'oom_kill'] as const;
 
 /**
  * CPU / memory / network / disk-IO sampler. On Linux this reads four small /proc files per tick and spawns nothing;
@@ -27,7 +43,12 @@ export class CoreCollector {
   private prevAll?: CpuTimes;
   private prevCores: CpuTimes[] = [];
   private prevNet?: { t: number; rx: number; tx: number };
-  private prevDisk?: { t: number; r: number; w: number };
+  private prevDisk?: { t: number; devs: Map<string, DiskCounter> };
+  private prevSplit?: CpuSplit;
+  private prevVm?: { t: number; in: number; out: number };
+  /** /proc/pressure exists and is readable (false once a read failed: PSI disabled at boot). */
+  private psi = true;
+  private readonly sensors = new Sensors();
   private ifaceVirtual = new Map<string, boolean>();
   private blockDevs?: Set<string>;
   private blockDevsAt = 0;
@@ -60,8 +81,10 @@ export class CoreCollector {
     this.btime = ps.btime;
     const cpu = cpuPercent(this.prevAll, ps.all);
     const cores = ps.cores.map((c, i) => cpuPercent(this.prevCores[i], c));
+    const split = cpuSplitPercent(this.prevSplit, ps.split);
     this.prevAll = ps.all;
     this.prevCores = ps.cores;
+    this.prevSplit = ps.split;
 
     let rxSum = 0;
     let txSum = 0;
@@ -81,22 +104,66 @@ export class CoreCollector {
     }
     this.prevNet = { t, rx: rxSum, tx: txSum };
 
-    let rSum = 0;
-    let wSum = 0;
-    for (const d of parseDiskstats(diskstats, this.physicalDisks())) {
-      rSum += d.readBytes;
-      wSum += d.writeBytes;
-    }
+    const devs = new Map(parseDiskstats(diskstats, this.physicalDisks()).map((d) => [d.dev, d]));
+    const disks: DiskRate[] = [];
     let diskRead = 0;
     let diskWrite = 0;
     if (this.prevDisk && t > this.prevDisk.t) {
-      const dt = (t - this.prevDisk.t) / 1000;
-      diskRead = Math.max(0, (rSum - this.prevDisk.r) / dt);
-      diskWrite = Math.max(0, (wSum - this.prevDisk.w) / dt);
+      for (const [dev, cur] of devs) {
+        const prev = this.prevDisk.devs.get(dev);
+        if (!prev) continue;
+        const r = diskRates(prev, cur, t - this.prevDisk.t);
+        disks.push(r);
+        diskRead += r.rBps;
+        diskWrite += r.wBps;
+      }
     }
-    this.prevDisk = { t, r: rSum, w: wSum };
+    this.prevDisk = { t, devs };
 
-    return { t, cpu, cores, load: os.loadavg() as [number, number, number], mem: memFromMeminfo(parseMeminfo(meminfo)), rx, tx, diskRead, diskWrite };
+    // swap traffic and OOM kills
+    let swapIn = 0;
+    let swapOut = 0;
+    let oomKills: number | undefined;
+    const vmText = readProc('/proc/vmstat');
+    if (vmText) {
+      const vm = parseVmstat(vmText, VMSTAT_KEYS);
+      if (this.prevVm && t > this.prevVm.t) {
+        const dt = (t - this.prevVm.t) / 1000;
+        swapIn = Math.max(0, ((vm.pswpin ?? 0) - this.prevVm.in) / dt) * PAGE;
+        swapOut = Math.max(0, ((vm.pswpout ?? 0) - this.prevVm.out) / dt) * PAGE;
+      }
+      this.prevVm = { t, in: vm.pswpin ?? 0, out: vm.pswpout ?? 0 };
+      oomKills = vm.oom_kill;
+    }
+
+    let psi: CoreSample['psi'];
+    if (this.psi) {
+      const rd = (r: string) => {
+        const txt = readProc(`/proc/pressure/${r}`);
+        return txt === undefined ? undefined : parsePressure(txt);
+      };
+      psi = { cpu: rd('cpu'), mem: rd('memory'), io: rd('io') };
+      if (!psi.cpu && !psi.mem && !psi.io) (this.psi = false), (psi = undefined);
+    }
+
+    return {
+      t,
+      cpu,
+      cores,
+      load: os.loadavg() as [number, number, number],
+      mem: memFromMeminfo(parseMeminfo(meminfo)),
+      rx,
+      tx,
+      diskRead,
+      diskWrite,
+      split,
+      disks,
+      psi,
+      swapIn,
+      swapOut,
+      oomKills,
+      temps: this.sensors.read(),
+    };
   }
 
   private isVirtualIface(iface: string): boolean {
@@ -112,7 +179,8 @@ export class CoreCollector {
     return v;
   }
 
-  private physicalDisks(): Set<string> {
+  /** Whole physical disks (names in /sys/block), refreshed every minute. */
+  physicalDisks(): Set<string> {
     if (!this.blockDevs || Date.now() - this.blockDevsAt > 60_000) {
       try {
         this.blockDevs = physicalBlockDevices(fs.readdirSync('/sys/block'));
@@ -140,6 +208,6 @@ export class CoreCollector {
     const free = os.freemem();
     const mem: MemSample = { total, used: total - free, available: free, free, cache: 0, shared: 0, swapTotal: 0, swapUsed: 0, percent: total ? ((total - free) / total) * 100 : 0 };
     const load = (process.platform === 'win32' ? [0, 0, 0] : os.loadavg()) as [number, number, number];
-    return { t, cpu, cores, load, mem, rx: 0, tx: 0, diskRead: 0, diskWrite: 0 };
+    return { t, cpu, cores, load, mem, rx: 0, tx: 0, diskRead: 0, diskWrite: 0, disks: [], swapIn: 0, swapOut: 0, temps: { disks: {} } };
   }
 }

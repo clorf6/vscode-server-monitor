@@ -111,5 +111,7 @@
   "command.quickCommands.add": "添加快捷命令…",
   "command.quickCommands.remove": "删除快捷命令",
   "config.quickCommands": "显示在侧边栏面板“工具 → 常用”页中的快捷命令，点击后在所连接机器的新终端中运行。例如：`{ \"name\": \"GPU\", \"command\": \"watch -n 1 nvidia-smi\" }`。",
-  "config.sidebar.showTreeViews": "在侧边栏面板下方同时显示经典的树形视图（GPU、进程、tmux、端口、磁盘、用户、Docker、文件夹大小、监视与提醒），可使用右键菜单。面板本身已为它们各提供一个页面。"
+  "config.sidebar.showTreeViews": "在侧边栏面板下方同时显示经典的树形视图（GPU、进程、tmux、端口、磁盘、用户、Docker、文件夹大小、监视与提醒），可使用右键菜单。面板本身已为它们各提供一个页面。",
+  "config.gpu.idleHoldMinutes": "GPU 闲置（利用率低于 `#serverMonitor.gpu.freeUtilPercent#`）超过这么多分钟、却仍有进程占着至少 1 GiB 显存时提醒。`0` 表示关闭。",
+  "config.statusBar.items.io": "磁盘 I/O：最忙磁盘的繁忙程度"
 }

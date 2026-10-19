@@ -2,11 +2,12 @@ import { randomBytes } from 'crypto';
 import * as os from 'os';
 import * as vscode from 'vscode';
 import { l10n } from 'vscode';
-import type { Attn, Goto, Locate, N, OvAttn, OvCfg, OvCore, OvDisk, OvGpu, OvHist, OvHostMsg, OvInit, OvPageMsg, OvSys, OvViewMsg, OvWatch, Page, ProcQuery } from '../../webview/overview-protocol';
+import type { Attn, Goto, IoRow, Locate, N, OvAttn, OvCfg, OvCore, OvDisk, OvGpu, OvHist, OvHostMsg, OvInit, OvPageMsg, OvSys, OvViewMsg, OvWatch, Page, ProcQuery } from '../../webview/overview-protocol';
 import { AlertManager } from '../alerts';
 import { CoreSample } from '../collectors/core';
 import { MountUsage } from '../collectors/disks';
 import { GpuSample } from '../collectors/gpu';
+import { slowdowns } from '../collectors/parsers';
 import { getSysInfo } from '../collectors/sysinfo';
 import { Monitor } from '../monitor';
 import { Demandable } from '../scheduler';
@@ -41,6 +42,19 @@ const HEAVY_RSS = 0.1;
 const GPU_MEM_PCT = 90;
 const GPU_TEMP = 85;
 const SWAP_PCT = 50;
+/** Stall pressure (% of the last 10 s some tasks waited): memory stalls hurt early, I/O waits are common in training. */
+const PSI_MEM = 10;
+const PSI_MEM_CRIT = 30;
+const PSI_IO = 30;
+const PSI_IO_CRIT = 60;
+const CPU_HOT = 90;
+const DISK_HOT = 75;
+/** Disk fill forecast: warn within a day, critical within two hours. */
+const FILL_WARN_S = 86400;
+const FILL_CRIT_S = 7200;
+const INODE_PCT = 90;
+/** An out-of-memory kill stays on the attention list this long. */
+const OOM_SHOW_MS = 3600_000;
 /** Percentage points below a threshold before a shown card goes away (no flicker at the edge). */
 const HYST = 2;
 /** Commands the webview may run. Anything else is ignored. */
@@ -73,6 +87,20 @@ function size(n: number | undefined): string {
   while (n >= 1024 && i < u.length - 1) (n /= 1024), i++;
   return `${i === 0 || n >= 100 ? Math.round(n) : n.toFixed(1)} ${u[i]}`;
 }
+
+/** "2小时5分" style durations, with the panel's own (translated) units. */
+function ldur(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return d ? l10n.t('{0}d {1}h', d, h) : h ? l10n.t('{0}h {1}m', h, m) : l10n.t('{0}m', Math.max(1, m));
+}
+
+const hhmm = (t: number) => {
+  const d = new Date(t);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -529,9 +557,18 @@ export class OverviewProvider implements vscode.WebviewViewProvider, vscode.Disp
     for (const d of mounts) {
       const id = `disk:${d.mount}`;
       const loc: Locate = { kind: 'disk', mount: d.mount };
+      const mine = d.home || rel.has(d.mount);
+      const eta = d.status === 'ok' && mine ? m.fillEta(d) : undefined;
+      const soon = eta && eta.seconds <= FILL_WARN_S ? eta : undefined;
+      const filling = soon ? l10n.t('Full in about {0} at the current rate', ldur(soon.seconds * 1000)) : '';
       if (d.status === 'timeout') out.push({ id, sev: 'crit', title: l10n.t('Disk {0} is not responding', d.mount), detail: `${d.fstype} · ${d.device}`, loc });
-      else if (d.status === 'ok' && d.percent !== undefined && (d.home || rel.has(d.mount)) && this.over(id, d.percent, cfg.alertDiskPercent)) {
-        out.push({ id, sev: d.percent >= 99 ? 'crit' : 'warn', title: l10n.t('Disk {0} is {1} full', d.mount, fmt.pct(d.percent)), detail: l10n.t('{0} free', size(d.avail)), loc });
+      else if (d.status === 'ok' && d.percent !== undefined && mine && this.over(id, d.percent, cfg.alertDiskPercent)) {
+        out.push({ id, sev: d.percent >= 99 || (soon && soon.seconds <= FILL_CRIT_S) ? 'crit' : 'warn', title: l10n.t('Disk {0} is {1} full', d.mount, fmt.pct(d.percent)), detail: [l10n.t('{0} free', size(d.avail)), filling].filter(Boolean).join(' · '), loc });
+      } else if (soon) {
+        out.push({ id: `fill:${d.mount}`, sev: soon.seconds <= FILL_CRIT_S ? 'crit' : 'warn', title: l10n.t('Disk {0} fills up in about {1}', d.mount, ldur(soon.seconds * 1000)), detail: l10n.t('Growing {0} per hour · {1} free', size(soon.rate * 3600), size(d.avail)), loc });
+      }
+      if (d.status === 'ok' && d.inodes && mine && this.over(`inode:${d.mount}`, d.inodes.percent, INODE_PCT)) {
+        out.push({ id: `inode:${d.mount}`, sev: d.inodes.percent >= 98 ? 'crit' : 'warn', title: l10n.t('Disk {0}: {1} of inodes used', d.mount, fmt.pct(d.inodes.percent)), detail: l10n.t('No new files can be created once they run out, even with space left'), loc });
       }
     }
 
@@ -544,6 +581,75 @@ export class OverviewProvider implements vscode.WebviewViewProvider, vscode.Disp
       if (list.length > 1) parts.push(l10n.t('+{0} more', list.length - 1));
       out.push({ id: `${st}:${p.pid}`, sev: 'warn', title: st === 'Z' ? l10n.t('Zombie process PID {0}', p.pid) : l10n.t('Stopped process PID {0}', p.pid), detail: parts.join(' · '), loc: { kind: 'proc', pid: p.pid } });
     }
+
+    // 6. the machine is struggling: memory / I/O stalls, out-of-memory kills, heat
+    if (core) {
+      const now = Date.now();
+      const kills = m.oomEvents.filter((e) => now - e.t < OOM_SHOW_MS);
+      if (kills.length) {
+        const n = kills.reduce((a, e) => a + e.n, 0);
+        const last = kills[kills.length - 1];
+        out.push({
+          id: `oom:${last.t}`,
+          sev: 'crit',
+          title: n > 1 ? l10n.t('The kernel killed {0} processes: out of memory', n) : l10n.t('The kernel killed a process: out of memory'),
+          detail: l10n.t('At {0} · {1} since boot', hhmm(last.t), core.oomKills ?? n),
+          loc: { kind: 'mem' },
+        });
+      }
+      const memP = core.psi?.mem?.some ?? NaN;
+      if (this.over('psi:mem', memP, PSI_MEM)) {
+        const swap = core.swapIn + core.swapOut;
+        out.push({ id: 'psi:mem', sev: memP >= PSI_MEM_CRIT ? 'crit' : 'warn', title: l10n.t('Memory pressure {0}', fmt.pct(memP)), detail: [l10n.t('Tasks waited for memory {0} of the last 10 s', fmt.pct(memP)), swap >= 1048576 ? l10n.t('Swapping {0}', `${size(swap)}/s`) : ''].filter(Boolean).join(' · '), loc: { kind: 'mem' } });
+      }
+      const ioP = core.psi?.io?.some ?? NaN;
+      if (this.over('psi:io', ioP, PSI_IO)) {
+        const top = [...core.disks].sort((a, b) => b.util - a.util)[0];
+        const onTop = top ? mounts.find((d) => m.disksOf(d).includes(top.dev)) : undefined;
+        out.push({
+          id: 'psi:io',
+          sev: ioP >= PSI_IO_CRIT ? 'crit' : 'warn',
+          title: l10n.t('Disk I/O pressure {0}', fmt.pct(ioP)),
+          detail: top ? l10n.t('{0} busy {1} · {2} ms per request', top.dev, fmt.pct(top.util), isFinite(top.awaitMs) ? top.awaitMs.toFixed(1) : '–') : l10n.t('Tasks waited for disk I/O {0} of the last 10 s', fmt.pct(ioP)),
+          loc: { kind: 'disk', mount: onTop?.mount ?? '' },
+        });
+      }
+      const ct = core.temps.cpu;
+      if (ct !== undefined && this.over('temp:cpu', ct, CPU_HOT)) out.push({ id: 'temp:cpu', sev: ct >= CPU_HOT + 7 ? 'crit' : 'warn', title: l10n.t('CPU temperature {0}', `${Math.round(ct)} °C`), detail: l10n.t('A hot CPU slows itself down'), loc: { kind: 'cpu' } });
+      for (const [dev, tc] of Object.entries(core.temps.disks)) {
+        if (!this.over(`temp:${dev}`, tc, DISK_HOT)) continue;
+        const on = mounts.find((d) => m.disksOf(d).includes(dev));
+        out.push({ id: `temp:${dev}`, sev: tc >= DISK_HOT + 8 ? 'crit' : 'warn', title: l10n.t('Disk {0} temperature {1}', dev, `${Math.round(tc)} °C`), detail: on ? on.mount : '', loc: { kind: 'disk', mount: on?.mount ?? '' } });
+      }
+    }
+
+    // 7. GPU hardware problems (any GPU: worth avoiding) and slowdowns on GPUs this user runs on
+    for (const g of m.gpu.latest?.gpus ?? []) {
+      const loc: Locate = { kind: 'gpu', index: g.index };
+      const id = `gpuhw:${g.index}`;
+      if (g.ecc !== undefined && g.ecc > 0) out.push({ id, sev: 'crit', title: l10n.t('GPU {0} has uncorrectable memory errors', g.index), detail: l10n.t('{0} since the driver loaded: results on this GPU may be wrong until it is reset', g.ecc), loc });
+      else if (g.pcieWidth !== undefined && g.pcieWidthMax !== undefined && g.pcieWidth < g.pcieWidthMax && g.util >= 30) out.push({ id, sev: 'warn', title: l10n.t('GPU {0} PCIe link degraded', g.index), detail: l10n.t('Running at ×{0} instead of ×{1}: transfers to and from it are slower', g.pcieWidth, g.pcieWidthMax), loc });
+      else if (myGpu.has(g.index) && m.slowSustained(g.index)) {
+        const thermal = slowdowns(g.throttle).includes('thermal');
+        out.push({ id, sev: 'warn', title: thermal ? l10n.t('GPU {0} is slowing down: too hot', g.index) : l10n.t('GPU {0} hardware slowdown', g.index), detail: [isFinite(g.temp) ? `${g.temp} °C` : '', l10n.t('Your process: {0}', myGpu.get(g.index)!)].filter(Boolean).join(' · '), loc });
+      }
+    }
+
+    // 8. GPUs idle for a while yet holding memory: the user's own (actionable), others' in one card
+    const holds = m.idleHolds();
+    const others: string[] = [];
+    for (const h of holds) {
+      const mineH = h.holders.filter((a) => a.uid === myUid).sort((a, b) => b.memMiB - a.memMiB);
+      const age = ldur(Date.now() - h.since);
+      if (mineH.length) {
+        out.push({ id: `idle:${h.index}`, sev: 'warn', title: l10n.t('GPU {0} idle for {1}, still holding {2}', h.index, age, size(h.heldMiB * 1048576)), detail: l10n.t('Your process: {0}', shortCmd(mineH[0].cmd) || mineH[0].name), loc: { kind: 'proc', pid: mineH[0].pid } });
+      } else {
+        const users = [...new Set(h.holders.map((a) => a.user))].join(', ');
+        others.push(`GPU ${h.index}: ${users} ${size(h.heldMiB * 1048576)} · ${age}`);
+      }
+    }
+    const otherIdx = holds.filter((h) => !h.holders.some((a) => a.uid === myUid)).map((h) => h.index);
+    if (otherIdx.length) out.push({ id: `idle:others:${otherIdx.join(',')}`, sev: 'warn', title: l10n.t('Idle GPUs held by other users: {0}', otherIdx.join(', ')), detail: others.join('; '), loc: { kind: 'gpu', index: otherIdx[0] } });
 
     out.sort((a, b) => Number(b.sev === 'crit') - Number(a.sev === 'crit'));
     this.shown = new Set(out.map((a) => a.id));
@@ -622,7 +728,26 @@ export class OverviewProvider implements vscode.WebviewViewProvider, vscode.Disp
       }
       return n ? rnd(s / n) : null;
     });
-    return { type: 'hist', t0: c.t[0] ?? 0, dt: delta(c.t), cpu: ser('cpu', 1), mem: ser('mem', 1), rx: ser('rx', 0), tx: ser('tx', 0), g: { t0: g.t[0] ?? 0, dt: delta(g.t), u: avg } };
+    return { type: 'hist', t0: c.t[0] ?? 0, dt: delta(c.t), cpu: ser('cpu', 1), mem: ser('mem', 1), rx: ser('rx', 0), tx: ser('tx', 0), g: { t0: g.t[0] ?? 0, dt: delta(g.t), u: avg }, io: ser('io', 1) };
+  }
+
+  /** Physical disk → the mounts on it (from the latest disk list). */
+  private mountsByDisk(): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const d of this.m.disks.latest?.mounts ?? [])
+      for (const dev of this.m.disksOf(d)) {
+        const l = out.get(dev);
+        if (l) l.push(d.mount);
+        else out.set(dev, [d.mount]);
+      }
+    return out;
+  }
+
+  ioRows(c: CoreSample): IoRow[] {
+    const mounts = this.mountsByDisk();
+    return [...c.disks]
+      .sort((a, b) => b.util - a.util || b.rBps + b.wBps - (a.rBps + a.wBps))
+      .map((d) => ({ dev: d.dev, util: rnd(d.util, 1), r: rnd(d.rBps), w: rnd(d.wBps), iops: rnd(d.rIops + d.wIops), await: rnd(d.awaitMs, 1), temp: rnd(c.temps.disks[d.dev]), mounts: mounts.get(d.dev) ?? [] }));
   }
 
   private coreMsg(c: CoreSample): OvCore {
@@ -637,11 +762,17 @@ export class OverviewProvider implements vscode.WebviewViewProvider, vscode.Disp
       tx: rnd(c.tx),
       dr: rnd(c.diskRead),
       dw: rnd(c.diskWrite),
+      split: c.split ? { u: rnd(c.split.user, 1), s: rnd(c.split.system, 1), w: rnd(c.split.iowait, 1), st: rnd(c.split.steal, 1) } : null,
+      cpuTemp: rnd(c.temps.cpu),
+      psi: c.psi ? { cpu: rnd(c.psi.cpu?.some, 1), mem: rnd(c.psi.mem?.some, 1), io: rnd(c.psi.io?.some, 1) } : null,
+      swapRate: rnd(c.swapIn + c.swapOut),
+      disks: this.ioRows(c),
     };
   }
 
   private gpuMsg(g: GpuSample): OvGpu {
     const free = new Set(this.m.freeGpus(g.gpus).map((x) => x.index));
+    const holds = new Map(this.m.idleHolds().map((h) => [h.index, h]));
     const users = new Map<number, Set<string>>();
     for (const a of this.m.gpuApps.latest ?? []) {
       let s = users.get(a.gpuIndex);
@@ -662,6 +793,16 @@ export class OverviewProvider implements vscode.WebviewViewProvider, vscode.Disp
         powerLimit: rnd(x.powerLimit),
         free: free.has(x.index),
         users: [...(users.get(x.index) ?? [])].sort(),
+        slow: slowdowns(x.throttle),
+        sm: rnd(x.smClock),
+        smMax: rnd(x.smClockMax),
+        pcie: x.pcieGen === undefined ? null : { gen: rnd(x.pcieGen), genMax: rnd(x.pcieGenMax), width: rnd(x.pcieWidth), widthMax: rnd(x.pcieWidthMax) },
+        ecc: rnd(x.ecc),
+        idle: (() => {
+          const since = this.m.idleSince(x.index);
+          const h = holds.get(x.index);
+          return since === undefined ? null : { since, held: Math.round(h?.heldMiB ?? 0), flagged: !!h };
+        })(),
       })),
     };
   }

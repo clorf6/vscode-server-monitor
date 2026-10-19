@@ -1,5 +1,5 @@
 import { ChildProcess } from 'child_process';
-import { GPU_FIELDS, GpuApp, GpuInfo, parseGpuApps, parseGpuLine } from './parsers';
+import { GPU_FIELDS, GPU_HEALTH_FIELDS, GpuApp, GpuInfo, parseGpuApps, parseGpuLine } from './parsers';
 import { run, runExclusive, spawnLines, which } from '../util/exec';
 import { readProc } from '../util/procfs';
 
@@ -8,7 +8,9 @@ export interface GpuSample {
   gpus: GpuInfo[];
 }
 
-const QUERY = `--query-gpu=${GPU_FIELDS.join(',')}`;
+const BASE_QUERY = `--query-gpu=${GPU_FIELDS.join(',')}`;
+/** Health field sets to try at detection, newest naming first. */
+const HEALTH_SETS: string[][] = [[...GPU_HEALTH_FIELDS], ['clocks_event_reasons.active', ...GPU_HEALTH_FIELDS.slice(1)]];
 const APPS_QUERY = '--query-compute-apps=pid,gpu_uuid,used_memory,process_name';
 const FORMAT = '--format=csv,noheader,nounits';
 /** All lines of one `-lms` cycle arrive within a millisecond or two; this much silence ends the cycle. */
@@ -29,6 +31,9 @@ export class GpuCollector {
   available?: boolean;
   /** WSL's nvidia-smi cannot list per-process usage. */
   appsSupported = true;
+  /** The driver accepted the health fields (slowdown reasons, clocks, PCIe link, ECC); they are part of every query. */
+  health = false;
+  private query = BASE_QUERY;
   private ready?: Promise<boolean>;
 
   private child?: ChildProcess;
@@ -59,13 +64,25 @@ export class GpuCollector {
     if (!this.ready) {
       this.ready = (async () => {
         if (!this.binary) return (this.available = false);
-        const r = await run(this.binary, [QUERY + ',driver_version', FORMAT], { timeoutMs: 15000 });
-        const lines = r.stdout.split('\n').filter(Boolean);
-        const gpus = lines.map(parseGpuLine).filter((g): g is GpuInfo => !!g);
+        // An unknown field fails the whole query: try the health fields (both namings), then the basic set.
+        let lines: string[] = [];
+        let extra: string[] = [];
+        for (const set of [...HEALTH_SETS, []]) {
+          const r = await run(this.binary, [`--query-gpu=${[...GPU_FIELDS, ...set, 'driver_version'].join(',')}`, FORMAT], { timeoutMs: 15000 });
+          lines = r.stdout.split('\n').filter(Boolean);
+          if (r.code === 0 && lines.length && !/not a valid field|Invalid combination/i.test(r.stdout + r.stderr)) {
+            extra = set;
+            break;
+          }
+          if (r.timedOut) break;
+        }
+        this.health = extra.length > 0;
+        this.query = `--query-gpu=${[...GPU_FIELDS, ...extra].join(',')}`;
+        const gpus = lines.map((l) => parseGpuLine(l, this.health)).filter((g): g is GpuInfo => !!g);
         this.gpuCount = gpus.length;
         for (const g of gpus) this.indexByUuid.set(g.uuid, g.index);
         const first = lines[0]?.split(', ');
-        this.driverVersion = first?.[GPU_FIELDS.length]?.trim();
+        this.driverVersion = first?.[GPU_FIELDS.length + extra.length]?.trim();
         this.available = this.gpuCount > 0;
         if (this.binary.startsWith('/usr/lib/wsl/')) this.appsSupported = false;
         return this.available;
@@ -103,7 +120,7 @@ export class GpuCollector {
     this.lastLineAt = Date.now();
     const child = spawnLines(
       this.binary!,
-      [QUERY, FORMAT, `-lms`, String(interval)],
+      [this.query, FORMAT, `-lms`, String(interval)],
       (line) => this.onLine(line),
       () => {
         if (this.child !== child) return; // stopped on purpose
@@ -125,7 +142,7 @@ export class GpuCollector {
 
   private onLine(line: string): void {
     this.lastLineAt = Date.now();
-    const g = parseGpuLine(line);
+    const g = parseGpuLine(line, this.health);
     if (!g) return;
     // A new cycle starts when the index does not increase; also flush as soon as we have every GPU.
     if (this.pending.length && g.index <= this.pending[this.pending.length - 1].index) this.flush();
@@ -266,8 +283,8 @@ export class GpuCollector {
 
   async queryOnce(): Promise<GpuSample | undefined> {
     if (!(await this.detect())) return undefined;
-    const r = await runExclusive('nvidia-smi:gpus', this.binary!, [QUERY, FORMAT], { timeoutMs: 10000 });
-    const gpus = r.stdout.split('\n').map(parseGpuLine).filter((g): g is GpuInfo => !!g);
+    const r = await runExclusive('nvidia-smi:gpus', this.binary!, [this.query, FORMAT], { timeoutMs: 10000 });
+    const gpus = r.stdout.split('\n').map((l) => parseGpuLine(l, this.health)).filter((g): g is GpuInfo => !!g);
     return gpus.length ? { t: Date.now(), gpus } : undefined;
   }
 

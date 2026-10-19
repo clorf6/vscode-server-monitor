@@ -2,7 +2,7 @@
   "name": "gpu-server-monitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "publisher": "clorf6",
   "engines": {
     "vscode": "^1.90.0"
@@ -1145,7 +1145,8 @@
               "gpuMem",
               "net",
               "load",
-              "disk"
+              "disk",
+              "io"
             ],
             "enumDescriptions": [
               "%config.statusBar.items.cpu%",
@@ -1154,7 +1155,8 @@
               "%config.statusBar.items.gpuMem%",
               "%config.statusBar.items.net%",
               "%config.statusBar.items.load%",
-              "%config.statusBar.items.disk%"
+              "%config.statusBar.items.disk%",
+              "%config.statusBar.items.io%"
             ]
           },
           "uniqueItems": true,
@@ -1202,6 +1204,14 @@
           "markdownDescription": "%config.gpu.freeUtilPercent%",
           "scope": "window",
           "order": 21
+        },
+        "serverMonitor.gpu.idleHoldMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "markdownDescription": "%config.gpu.idleHoldMinutes%",
+          "scope": "window",
+          "order": 22
         },
         "serverMonitor.alerts.enabled": {
           "type": "boolean",

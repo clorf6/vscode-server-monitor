@@ -111,5 +111,7 @@
   "command.quickCommands.add": "Add Quick Command…",
   "command.quickCommands.remove": "Remove Quick Command",
   "config.quickCommands": "Quick commands shown on the sidebar panel's Tools → Common page. Each runs in a new integrated terminal on the connected machine. Example: `{ \"name\": \"GPU\", \"command\": \"watch -n 1 nvidia-smi\" }`.",
-  "config.sidebar.showTreeViews": "Also show the classic tree views (GPUs, Processes, tmux, Ports, Disks, Users, Docker, Folder Sizes, Watches) with their right-click menus below the sidebar panel. The panel itself has a page for each of them."
+  "config.sidebar.showTreeViews": "Also show the classic tree views (GPUs, Processes, tmux, Ports, Disks, Users, Docker, Folder Sizes, Watches) with their right-click menus below the sidebar panel. The panel itself has a page for each of them.",
+  "config.gpu.idleHoldMinutes": "Flag a GPU that has been idle (utilization below `#serverMonitor.gpu.freeUtilPercent#`) for this many minutes while processes keep at least 1 GiB of its memory. `0` turns this off.",
+  "config.statusBar.items.io": "Disk I/O: how busy the busiest disk is"
 }

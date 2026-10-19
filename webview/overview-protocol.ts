@@ -38,13 +38,17 @@ export type OvKey =
   // watches
   | 'wEmpty' | 'wEmptyHint' | 'wSince' | 'wAddGpu' | 'wClear' | 'wHintProc' | 'wHintTmux' | 'wGoProc' | 'wGoTmux' | 'wAlerts' | 'wAlertsOff'
   // docker
-  | 'dkDisabled' | 'dkNoSocket' | 'dkNoPerm' | 'dkError' | 'dkEmpty' | 'dkRunning' | 'aStart' | 'aStop' | 'aRestart' | 'aLogs' | 'aExec' | 'aCopyId';
+  | 'dkDisabled' | 'dkNoSocket' | 'dkNoPerm' | 'dkError' | 'dkEmpty' | 'dkRunning' | 'aStart' | 'aStop' | 'aRestart' | 'aLogs' | 'aExec' | 'aCopyId'
+  // I/O, pressure, temperatures, GPU health
+  | 'io' | 'ioTip' | 'ioNone' | 'split' | 'steal' | 'stall' | 'psiCpu' | 'psiMem' | 'psiIo' | 'psiNote' | 'swapLine' | 'swapping'
+  | 'await' | 'iops' | 'physDisks' | 'busy' | 'onDisk' | 'inodes' | 'fillEta' | 'fillRate' | 'temp'
+  | 'slowPower' | 'slowThermal' | 'slowHw' | 'slowTip' | 'clock' | 'pcie' | 'pcieDown' | 'ecc' | 'idleHeld' | 'idleHeldTip' | 'sIo';
 
 /** Primary sections (the segmented control) and the pages inside them (the underline tabs). */
 export type Seg = 'mon' | 'gpu' | 'tools';
 export type Page = 'ov' | 'proc' | 'port' | 'disk' | 'gpu' | 'user' | 'tmux' | 'tools' | 'du' | 'watch' | 'docker';
 
-export type ProcSort = 'cpu' | 'mem' | 'gpu' | 'time';
+export type ProcSort = 'cpu' | 'mem' | 'gpu' | 'io' | 'time';
 export type Scope = 'mine' | 'all';
 
 /** What the process page asks for; the host answers with at most `limit` rows. */
@@ -65,7 +69,7 @@ export type Goto =
   | { page: Exclude<Page, 'proc' | 'disk' | 'gpu' | 'du'> };
 
 /** What a "Locate" action on an attention card points at (handled inside the webview). */
-export type Locate = { kind: 'proc'; pid: number } | { kind: 'mem' } | { kind: 'disk'; mount: string } | { kind: 'gpu'; index: number };
+export type Locate = { kind: 'proc'; pid: number } | { kind: 'cpu' } | { kind: 'mem' } | { kind: 'disk'; mount: string } | { kind: 'gpu'; index: number };
 
 export interface Attn {
   /** Stable per condition (e.g. `gpu:3`), so a dismissed card stays dismissed until the condition clears. */
@@ -94,6 +98,21 @@ export interface OvCfg {
   quick: { name: string; command: string }[];
 }
 
+/** One physical disk's activity. */
+export interface IoRow {
+  dev: string;
+  /** % of the time it had I/O in flight. */
+  util: N;
+  r: N; // bytes/s
+  w: N;
+  iops: N;
+  /** Average time per request, ms. */
+  await: N;
+  temp: N;
+  /** Mounts on it. */
+  mounts: string[];
+}
+
 export interface OvCore {
   type: 'core';
   t: number;
@@ -105,6 +124,16 @@ export interface OvCore {
   /** Disk read / write, bytes/s. */
   dr: N;
   dw: N;
+  /** CPU time split, %: user, system, waiting for I/O, stolen (null before the second sample). */
+  split: { u: N; s: N; w: N; st: N } | null;
+  /** Hottest CPU package, °C. */
+  cpuTemp: N;
+  /** Stall pressure, % of the last 10 s ("some" tasks waiting), when the kernel reports it. */
+  psi: { cpu: N; mem: N; io: N } | null;
+  /** Swap traffic, bytes/s (in + out). */
+  swapRate: N;
+  /** Physical disks, busiest first. */
+  disks: IoRow[];
 }
 
 export interface OvGpuRow {
@@ -119,6 +148,16 @@ export interface OvGpuRow {
   free: boolean;
   /** Users with a process on this GPU (sorted). */
   users: string[];
+  /** Why it runs below full clocks (empty: it does not, or the driver does not say). */
+  slow: ('power' | 'thermal' | 'hardware')[];
+  sm: N; // MHz
+  smMax: N;
+  pcie: { gen: N; genMax: N; width: N; widthMax: N } | null;
+  /** Uncorrectable ECC errors since the driver loaded. */
+  ecc: N;
+  /** Idle while processes hold its memory: since when (epoch ms), how much (MiB), and whether that is long enough
+   * (serverMonitor.gpu.idleHoldMinutes) to be flagged. */
+  idle: { since: number; held: number; flagged: boolean } | null;
 }
 
 export interface OvGpu {
@@ -161,6 +200,8 @@ export interface OvHist {
   tx: N[];
   /** Average GPU utilization; timestamps of its own. */
   g: { t0: number; dt: number[]; u: N[] };
+  /** Busiest disk's busy %. */
+  io: N[];
 }
 
 // ---------------------------------------------------------------- page payloads (sent only while that page is shown)
@@ -173,6 +214,9 @@ export interface ProcRow {
   rss: number;
   /** GPU memory, MiB (null: none). */
   g: N;
+  /** Storage read / write, bytes/s (own processes; null when unknown). */
+  ior: N;
+  iow: N;
   /** Owner name (all-users scope only). */
   u?: string;
   st: string;
@@ -229,6 +273,13 @@ export interface DiskRow {
   total: N;
   avail: N;
   percent: N;
+  /** Inodes used, % (null: the filesystem has no fixed number). */
+  inodes: N;
+  /** Fills up in this many seconds at its recent rate, growing `rate` bytes/s (null: not filling measurably). */
+  eta: N;
+  rate: N;
+  /** Physical disks it lives on. */
+  disks: string[];
 }
 
 export interface OvDisks {

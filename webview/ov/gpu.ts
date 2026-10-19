@@ -3,7 +3,7 @@
 
 import type { OvGpuRow, OvKey } from '../overview-protocol';
 import { fmtPct } from '../charts';
-import { Bar, bar, button, clickable, cmd, el, emptyBox, flash, flush, G, icon, mark, num, onRender, PageDef, post, save, setBar, setEmpty, setText, setTitle, st, tr } from './core';
+import { Bar, bar, button, clickable, cmd, dur, el, emptyBox, flash, flush, G, icon, mark, num, onRender, PageDef, post, save, setBar, setEmpty, setText, setTitle, st, tr } from './core';
 
 const gib = (mib: number | null) => (mib == null ? '–' : (mib / 1024).toFixed(mib >= 102400 ? 0 : 1));
 
@@ -18,6 +18,8 @@ interface GpuRowUi {
   mv: HTMLElement;
   meta: HTMLElement;
   users: HTMLElement;
+  /** Slowdowns, ECC errors, a degraded link, idle-but-held. */
+  tags: HTMLElement;
 }
 const rows = new Map<number, GpuRowUi>();
 let key = '';
@@ -77,7 +79,8 @@ function gpuRow(parent: Element, i: number): GpuRowUi {
   const g3 = el('div', 'g3', root);
   const meta = el('span', 'gmeta', g3);
   const users = el('span', 'users', g3);
-  return { root, model, badge, bt, ub: u.b, uv: u.v, mb: m.b, mv: m.v, meta, users };
+  const tags = el('div', 'g4', root);
+  return { root, model, badge, bt, ub: u.b, uv: u.v, mb: m.b, mv: m.v, meta, users, tags };
 }
 
 function update(r: GpuRowUi, x: OvGpuRow, selected: boolean): void {
@@ -95,8 +98,33 @@ function update(r: GpuRowUi, x: OvGpuRow, selected: boolean): void {
   const mp = x.memTotal ? (num(x.memUsed) / x.memTotal) * 100 : NaN;
   setBar(r.mb, mp, fmtPct(mp));
   setText(r.mv, `${gib(x.memUsed)}/${gib(x.memTotal)} GB`);
-  const meta = [x.temp == null ? '' : `${x.temp}°C`, x.power == null ? '' : x.powerLimit == null ? `${x.power} W` : `${x.power}/${x.powerLimit} W`].filter(Boolean).join(' · ');
+  const pc = x.pcie;
+  const meta = [
+    x.temp == null ? '' : `${x.temp}°C`,
+    x.power == null ? '' : x.powerLimit == null ? `${x.power} W` : `${x.power}/${x.powerLimit} W`,
+    x.sm == null || x.smMax == null ? '' : tr('clock', x.sm, x.smMax),
+    pc?.gen == null || pc.width == null ? '' : tr('pcie', pc.gen, pc.width),
+  ]
+    .filter(Boolean)
+    .join(' · ');
   setText(r.meta, meta);
+  // health and waste, as tags: [text, class, tooltip]
+  const tags: [string, string, string][] = [];
+  if (x.ecc != null && x.ecc > 0) tags.push([tr('ecc', x.ecc), 'crit', '']);
+  if (pc?.width != null && pc.widthMax != null && pc.width < pc.widthMax) tags.push([tr('pcieDown', pc.width, pc.widthMax), 'warn', '']);
+  for (const w of x.slow) tags.push([tr(w === 'power' ? 'slowPower' : w === 'thermal' ? 'slowThermal' : 'slowHw'), w === 'power' ? '' : 'warn', tr('slowTip')]);
+  if (x.idle) tags.push([tr('idleHeld', dur((Date.now() - x.idle.since) / 1000), `${gib(x.idle.held)} GB`), x.idle.flagged ? 'warn' : '', tr('idleHeldTip')]);
+  const tk = JSON.stringify(tags);
+  if (r.tags.dataset.k !== tk) {
+    r.tags.dataset.k = tk;
+    r.tags.replaceChildren(
+      ...tags.map(([text, cls, tip]) => {
+        const t = el('span', 'tag ' + cls, undefined, text);
+        if (tip) t.title = tip;
+        return t;
+      }),
+    );
+  }
   const k = x.users.join(',');
   if (r.users.dataset.k !== k) {
     r.users.dataset.k = k;

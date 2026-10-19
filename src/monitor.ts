@@ -12,7 +12,9 @@ import { History } from './history';
 import { deepEqual, Demandable, DemandOptions, Scheduler, Source } from './scheduler';
 import { UserNames } from './util/users';
 import { pidUid, readProc } from './util/procfs';
-import { parseCmdline } from './collectors/parsers';
+import { parseCmdline, slowdowns } from './collectors/parsers';
+import { fillEta, Point } from './util/forecast';
+import { physicalDisksOf } from './util/blockdev';
 
 /**
  * Refresh interval for glanceable consumers (the status bar): pass `{ minInterval: GLANCE_INTERVAL_MS }` to demand() so
@@ -31,6 +33,21 @@ export interface GpuProc extends GpuApp {
 export interface ProcData extends ProcSnapshot {
   scope: 'mine' | 'all';
 }
+
+/** A GPU idle for a while yet holding memory: since when, how much, and whose processes. */
+export interface IdleHold {
+  index: number;
+  since: number;
+  heldMiB: number;
+  holders: GpuProc[];
+}
+
+/** Memory a GPU's processes must hold for "idle but held" (desktop/driver leftovers stay below this). */
+const HOLD_MIN_MIB = 1024;
+/** A gap this long between GPU samples (nothing asked for them) restarts the idle clock: we cannot vouch for it. */
+const IDLE_GAP_MS = 5 * 60_000;
+/** Used-space samples kept per mount for the fill forecast. */
+const DISK_HIST_MS = 3 * 3600_000;
 
 /** Owns every collector and data source; views and the dashboard subscribe through `Source.demand()`. */
 export class Monitor implements vscode.Disposable {
@@ -58,6 +75,16 @@ export class Monitor implements vscode.Disposable {
 
   coreHistory: History;
   gpuHistory: History;
+
+  /** GPU index → since when it is idle while holding memory (and when that was last confirmed). */
+  private gpuIdle = new Map<number, { since: number; seen: number; heldMiB: number }>();
+  /** GPU index → recent samples with a thermal / hardware slowdown (0..5; flagged from 3, so one blip is not). */
+  private gpuSlow = new Map<number, number>();
+  /** OOM kills seen while running (the counter is per boot, so only increases we observe are events). */
+  readonly oomEvents: { t: number; n: number }[] = [];
+  private oomLast?: number;
+  /** Mount → used bytes over time. */
+  private diskHist = new Map<string, Point[]>();
 
   /** Consumers that need every user's processes (others only need the current user's). */
   private allProcsDemand = new Set<string>();
@@ -111,8 +138,14 @@ export class Monitor implements vscode.Disposable {
 
     this.coreHistory = this.newHistory();
     this.gpuHistory = this.newHistory();
-    this.core.onData.event((c) => this.coreHistory.push(c.t, { cpu: c.cpu, mem: c.mem.percent, rx: c.rx, tx: c.tx, dr: c.diskRead, dw: c.diskWrite }));
+    this.core.onData.event((c) => {
+      const io = c.disks.length ? Math.max(...c.disks.map((d) => d.util)) : NaN;
+      this.coreHistory.push(c.t, { cpu: c.cpu, mem: c.mem.percent, rx: c.rx, tx: c.tx, dr: c.diskRead, dw: c.diskWrite, io, iow: c.split?.iowait ?? NaN });
+      this.trackOom(c);
+    });
+    this.disks.onData.event((d) => this.trackDisks(d.mounts));
     this.gpu.onData.event((g) => {
+      this.trackIdle(g);
       const v: Record<string, number> = {};
       for (const x of g.gpus) {
         v[`u${x.index}`] = x.util;
@@ -176,6 +209,88 @@ export class Monitor implements vscode.Disposable {
         cmd: (raw && parseCmdline(raw.slice(0, 4096))) || a.name,
       };
     });
+  }
+
+  // ------------------------------------------------------------ derived state
+
+  /** Recent compute apps (undefined when unknown or stale). */
+  recentApps(): GpuProc[] | undefined {
+    return this.gpuC.appsSupported && Date.now() - this.gpuApps.updatedAt < 30_000 ? this.gpuApps.latest : undefined;
+  }
+
+  private trackIdle(g: GpuSample): void {
+    for (const x of g.gpus) {
+      const bad = slowdowns(x.throttle).some((r) => r !== 'power');
+      const n = this.gpuSlow.get(x.index) ?? 0;
+      this.gpuSlow.set(x.index, bad ? Math.min(5, n + 1) : Math.max(0, n - 1));
+    }
+    const apps = this.recentApps();
+    if (!apps) return; // who holds what is unknown (WSL, or the app list is not running): no verdict
+    for (const x of g.gpus) {
+      const held = apps.filter((a) => a.gpuIndex === x.index).reduce((n, a) => n + (isFinite(a.memMiB) ? a.memMiB : 0), 0);
+      const idle = isFinite(x.util) && x.util < this.cfg.gpuFreeUtilPercent && held >= HOLD_MIN_MIB;
+      const prev = this.gpuIdle.get(x.index);
+      if (!idle) this.gpuIdle.delete(x.index);
+      else if (!prev || g.t - prev.seen > IDLE_GAP_MS) this.gpuIdle.set(x.index, { since: g.t, seen: g.t, heldMiB: held });
+      else (prev.seen = g.t), (prev.heldMiB = held);
+    }
+  }
+
+  /** GPUs idle for at least the configured time while processes hold their memory. */
+  idleHolds(now = Date.now()): IdleHold[] {
+    const min = this.cfg.gpuIdleHoldMinutes * 60_000;
+    if (!min) return [];
+    const apps = this.recentApps() ?? [];
+    const out: IdleHold[] = [];
+    for (const [index, s] of this.gpuIdle) {
+      if (now - s.seen > IDLE_GAP_MS || now - s.since < min) continue;
+      out.push({ index, since: s.since, heldMiB: s.heldMiB, holders: apps.filter((a) => a.gpuIndex === index) });
+    }
+    return out.sort((a, b) => a.index - b.index);
+  }
+
+  /** A thermal or hardware slowdown has lasted several samples. */
+  slowSustained(index: number): boolean {
+    return (this.gpuSlow.get(index) ?? 0) >= 3;
+  }
+
+  /** Since when a GPU has been idle while held (whether or not that is long enough to flag yet). */
+  idleSince(index: number): number | undefined {
+    const s = this.gpuIdle.get(index);
+    return s && Date.now() - s.seen <= IDLE_GAP_MS ? s.since : undefined;
+  }
+
+  private trackOom(c: CoreSample): void {
+    if (c.oomKills === undefined) return;
+    if (this.oomLast !== undefined && c.oomKills > this.oomLast) {
+      this.oomEvents.push({ t: c.t, n: c.oomKills - this.oomLast });
+      if (this.oomEvents.length > 20) this.oomEvents.shift();
+    }
+    this.oomLast = c.oomKills;
+  }
+
+  private trackDisks(mounts: MountUsage[]): void {
+    const now = Date.now();
+    for (const d of mounts) {
+      if (d.status !== 'ok' || d.used === undefined) continue;
+      let h = this.diskHist.get(d.mount);
+      if (!h) this.diskHist.set(d.mount, (h = []));
+      // a long gap (nothing showed the disks) starts over: the trend before it says nothing about now
+      if (h.length && now - h[h.length - 1].t > 15 * 60_000) h.length = 0;
+      if (!h.length || now - h[h.length - 1].t >= 5000) h.push({ t: now, v: d.used });
+      while (h.length && h[0].t < now - DISK_HIST_MS) h.shift();
+    }
+  }
+
+  /** When a mount fills up at its recent rate (undefined: not filling measurably within a week). */
+  fillEta(d: MountUsage): { seconds: number; rate: number } | undefined {
+    const h = this.diskHist.get(d.mount);
+    return h && d.avail !== undefined ? fillEta(h, d.avail) : undefined;
+  }
+
+  /** Physical disks behind a mount (empty for network and virtual filesystems). */
+  disksOf(d: MountUsage): string[] {
+    return d.network ? [] : physicalDisksOf(d.device, this.coreC.physicalDisks());
   }
 
   freeGpus(gpus: GpuInfo[] = this.gpu.latest?.gpus ?? []): GpuInfo[] {

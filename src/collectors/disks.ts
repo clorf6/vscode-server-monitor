@@ -72,13 +72,13 @@ export class DiskCollector {
       let status: MountStatus = 'ok';
       if (network && this.stat) {
         // One `stat` per mount at a time, even after a timeout: a hung mount leaves it in D state (unkillable).
-        const r = await runExclusive(`statfs:${m.mount}`, this.stat, ['-f', '-c', '%S %b %f %a', '--', m.mount], { timeoutMs: this.opts().networkTimeoutMs });
+        const r = await runExclusive(`statfs:${m.mount}`, this.stat, ['-f', '-c', '%S %b %f %a %c %d', '--', m.mount], { timeoutMs: this.opts().networkTimeoutMs });
         if (r.timedOut) status = 'timeout';
         else if (!(usage = parseStatF(r.stdout))) status = 'error';
       } else {
         try {
           const s = await fs.promises.statfs(m.mount);
-          usage = statfsToUsage(s.bsize, s.blocks, s.bfree, s.bavail);
+          usage = statfsToUsage(s.bsize, s.blocks, s.bfree, s.bavail, s.files, s.ffree);
         } catch {
           status = 'error';
         }

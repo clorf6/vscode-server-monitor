@@ -5,11 +5,23 @@ export interface CpuTimes {
   total: number;
 }
 
-/** /proc/stat → aggregate (`all`) and per-core jiffies, plus boot time. Offline cores leave holes. */
-export function parseProcStat(text: string): { all: CpuTimes; cores: CpuTimes[]; btime: number } {
+/** Where the machine's CPU time went (jiffies): user (+nice), system (+irq, softirq), waiting for I/O, stolen by the
+ * hypervisor, idle. */
+export interface CpuSplit {
+  user: number;
+  system: number;
+  iowait: number;
+  steal: number;
+  idle: number;
+  total: number;
+}
+
+/** /proc/stat → aggregate (`all`, `split`) and per-core jiffies, plus boot time. Offline cores leave holes. */
+export function parseProcStat(text: string): { all: CpuTimes; cores: CpuTimes[]; btime: number; split?: CpuSplit } {
   let all: CpuTimes = { idle: 0, total: 0 };
   const cores: CpuTimes[] = [];
   let btime = 0;
+  let split: CpuSplit | undefined;
   for (const line of text.split('\n')) {
     if (line.startsWith('cpu')) {
       const parts = line.trim().split(/\s+/);
@@ -18,13 +30,26 @@ export function parseProcStat(text: string): { all: CpuTimes; cores: CpuTimes[];
       for (let i = 1; i <= 8 && i < parts.length; i++) total += Number(parts[i]) || 0;
       const idle = (Number(parts[4]) || 0) + (Number(parts[5]) || 0);
       const name = parts[0];
-      if (name === 'cpu') all = { idle, total };
+      if (name === 'cpu') {
+        all = { idle, total };
+        const f = (i: number) => Number(parts[i]) || 0;
+        split = { user: f(1) + f(2), system: f(3) + f(6) + f(7), iowait: f(5), steal: f(8), idle: f(4), total };
+      }
       else cores[Number(name.slice(3))] = { idle, total };
     } else if (line.startsWith('btime ')) {
       btime = Number(line.slice(6)) || 0;
     }
   }
-  return { all, cores, btime };
+  return { all, cores, btime, split };
+}
+
+/** Shares of the CPU time between two /proc/stat reads, in % of all CPU time. */
+export function cpuSplitPercent(prev: CpuSplit | undefined, cur: CpuSplit | undefined): { user: number; system: number; iowait: number; steal: number } | undefined {
+  if (!prev || !cur) return undefined;
+  const dt = cur.total - prev.total;
+  if (dt <= 0) return undefined;
+  const pc = (k: 'user' | 'system' | 'iowait' | 'steal') => Math.max(0, Math.min(100, ((cur[k] - prev[k]) / dt) * 100));
+  return { user: pc('user'), system: pc('system'), iowait: pc('iowait'), steal: pc('steal') };
 }
 
 export function cpuPercent(prev: CpuTimes | undefined, cur: CpuTimes | undefined): number {
@@ -93,6 +118,14 @@ export interface DiskCounter {
   dev: string;
   readBytes: number;
   writeBytes: number;
+  /** Completed reads / writes. */
+  reads: number;
+  writes: number;
+  /** Milliseconds spent reading / writing (summed over requests). */
+  readMs: number;
+  writeMs: number;
+  /** Milliseconds the device had I/O in flight ("busy" time, as iostat's %util). */
+  ioMs: number;
 }
 
 /** /proc/diskstats → cumulative bytes (sectors are always 512 B here), restricted to `devices` when given. */
@@ -103,9 +136,82 @@ export function parseDiskstats(text: string, devices?: Set<string>): DiskCounter
     if (f.length < 10) continue;
     const dev = f[2];
     if (devices && !devices.has(dev)) continue;
-    out.push({ dev, readBytes: (Number(f[5]) || 0) * 512, writeBytes: (Number(f[9]) || 0) * 512 });
+    const n = (i: number) => Number(f[i]) || 0;
+    out.push({ dev, readBytes: n(5) * 512, writeBytes: n(9) * 512, reads: n(3), writes: n(7), readMs: n(6), writeMs: n(10), ioMs: f.length > 12 ? n(12) : 0 });
   }
   return out;
+}
+
+export interface DiskRate {
+  dev: string;
+  /** % of the time the device was busy. */
+  util: number;
+  /** Bytes/s. */
+  rBps: number;
+  wBps: number;
+  /** Operations/s. */
+  rIops: number;
+  wIops: number;
+  /** Average time per request (queueing + service), ms; NaN without requests. */
+  awaitMs: number;
+}
+
+/** Per-device rates between two diskstats reads `dtMs` apart. */
+export function diskRates(prev: DiskCounter, cur: DiskCounter, dtMs: number): DiskRate {
+  const d = (k: keyof Omit<DiskCounter, 'dev'>) => Math.max(0, cur[k] - prev[k]);
+  const s = dtMs / 1000;
+  const ops = d('reads') + d('writes');
+  return {
+    dev: cur.dev,
+    util: dtMs > 0 ? Math.min(100, (d('ioMs') / dtMs) * 100) : 0,
+    rBps: s > 0 ? d('readBytes') / s : 0,
+    wBps: s > 0 ? d('writeBytes') / s : 0,
+    rIops: s > 0 ? d('reads') / s : 0,
+    wIops: s > 0 ? d('writes') / s : 0,
+    awaitMs: ops ? (d('readMs') + d('writeMs')) / ops : NaN,
+  };
+}
+
+/** One line of /proc/pressure/{cpu,memory,io}: share of time (%) some / all non-idle tasks were stalled. */
+export interface Pressure {
+  some: number;
+  /** Absent for cpu on older kernels. */
+  full?: number;
+  some60: number;
+}
+
+/** /proc/pressure/<resource> → the 10-second averages (and the 60-second "some" average). */
+export function parsePressure(text: string): Pressure | undefined {
+  let some: number | undefined;
+  let some60 = NaN;
+  let full: number | undefined;
+  for (const line of text.split('\n')) {
+    const m = /^(some|full)\s+avg10=([\d.]+)\s+avg60=([\d.]+)/.exec(line.trim());
+    if (!m) continue;
+    if (m[1] === 'some') {
+      some = Number(m[2]);
+      some60 = Number(m[3]);
+    } else full = Number(m[2]);
+  }
+  return some === undefined ? undefined : { some, full, some60 };
+}
+
+/** /proc/vmstat → the named counters. */
+export function parseVmstat(text: string, keys: readonly string[]): Record<string, number> {
+  const want = new Set(keys);
+  const out: Record<string, number> = {};
+  for (const line of text.split('\n')) {
+    const sp = line.indexOf(' ');
+    if (sp > 0 && want.has(line.slice(0, sp))) out[line.slice(0, sp)] = Number(line.slice(sp + 1)) || 0;
+  }
+  return out;
+}
+
+/** /proc/<pid>/io → bytes actually read from / written to storage. */
+export function parsePidIo(text: string): { read: number; write: number } | undefined {
+  const r = /^read_bytes:\s*(\d+)/m.exec(text);
+  const w = /^write_bytes:\s*(\d+)/m.exec(text);
+  return r && w ? { read: Number(r[1]), write: Number(w[1]) } : undefined;
 }
 
 /** Whole physical disks from a /sys/block listing; skips virtual/stacked devices to avoid double counting. */
@@ -273,22 +379,27 @@ export interface StatFs {
   used: number;
   avail: number;
   percent: number;
+  /** Inodes (files): only for filesystems that have a fixed number of them. */
+  inodes?: { total: number; used: number; percent: number };
 }
 
 /** Turn statfs block counts into df-style numbers (percent is used / (used + avail), like df). */
-export function statfsToUsage(bsize: number, blocks: number, bfree: number, bavail: number): StatFs {
+export function statfsToUsage(bsize: number, blocks: number, bfree: number, bavail: number, files?: number, ffree?: number): StatFs {
   const total = blocks * bsize;
   const used = (blocks - bfree) * bsize;
   const avail = bavail * bsize;
   const denom = used + avail;
-  return { total, used, avail, percent: denom > 0 ? (used / denom) * 100 : 0 };
+  const out: StatFs = { total, used, avail, percent: denom > 0 ? (used / denom) * 100 : 0 };
+  // btrfs, ZFS, NFS and others report 0 or "unlimited" inodes: nothing to run out of
+  if (files !== undefined && ffree !== undefined && files > 0 && ffree <= files && files < 2 ** 52) out.inodes = { total: files, used: files - ffree, percent: ((files - ffree) / files) * 100 };
+  return out;
 }
 
-/** `stat -f -c '%S %b %f %a'` output. */
+/** `stat -f -c '%S %b %f %a %c %d'` output (block size, blocks, free, available, inodes, free inodes). */
 export function parseStatF(out: string): StatFs | undefined {
   const f = out.trim().split(/\s+/).map(Number);
-  if (f.length < 4 || f.some((x) => !isFinite(x))) return undefined;
-  return statfsToUsage(f[0], f[1], f[2], f[3]);
+  if (f.length < 4 || f.slice(0, 4).some((x) => !isFinite(x))) return undefined;
+  return statfsToUsage(f[0], f[1], f[2], f[3], isFinite(f[4]) ? f[4] : undefined, isFinite(f[5]) ? f[5] : undefined);
 }
 
 export const GPU_FIELDS = [
@@ -317,6 +428,36 @@ export interface GpuInfo {
   power: number; // W
   powerLimit: number; // W
   fan: number; // %
+  // Health (only when the driver supports the fields, see GPU_HEALTH_FIELDS); NaN when not reported.
+  /** Active clock throttle / event reasons (NVML bitmask). */
+  throttle?: number;
+  smClock?: number; // MHz
+  smClockMax?: number;
+  pcieGen?: number;
+  pcieGenMax?: number;
+  pcieWidth?: number;
+  pcieWidthMax?: number;
+  /** Uncorrectable ECC errors since the driver loaded. */
+  ecc?: number;
+}
+
+/** Health fields, queried after detection found the driver accepts them (an unknown field fails the whole query). The
+ * throttle field was renamed "clocks_event_reasons" in newer drivers; the probe tries both. */
+export const GPU_HEALTH_FIELDS = ['clocks_throttle_reasons.active', 'clocks.sm', 'clocks.max.sm', 'pcie.link.gen.current', 'pcie.link.gen.max', 'pcie.link.width.current', 'pcie.link.width.max', 'ecc.errors.uncorrected.volatile.total'] as const;
+
+/** NVML clock throttle reason bits. */
+const THR = { powerCap: 0x4, hwSlowdown: 0x8, swThermal: 0x20, hwThermal: 0x40, powerBrake: 0x80 };
+
+export type Slowdown = 'power' | 'thermal' | 'hardware';
+
+/** Why a GPU runs below its clocks, from the throttle bitmask (idle, sync boost and application clocks are normal). */
+export function slowdowns(mask: number | undefined): Slowdown[] {
+  if (mask === undefined || !isFinite(mask)) return [];
+  const out: Slowdown[] = [];
+  if (mask & THR.powerCap) out.push('power');
+  if (mask & (THR.swThermal | THR.hwThermal)) out.push('thermal');
+  if (mask & (THR.hwSlowdown | THR.powerBrake) && !(mask & THR.hwThermal)) out.push('hardware');
+  return out;
 }
 
 function num(s: string | undefined): number {
@@ -325,12 +466,29 @@ function num(s: string | undefined): number {
   return isFinite(v) ? v : NaN; // "[N/A]", "[Not Supported]"
 }
 
-/** One line of `nvidia-smi --query-gpu=<GPU_FIELDS> --format=csv,noheader,nounits`. */
-export function parseGpuLine(line: string): GpuInfo | undefined {
+/** One line of `nvidia-smi --query-gpu=<GPU_FIELDS>[,<GPU_HEALTH_FIELDS>] --format=csv,noheader,nounits`. */
+export function parseGpuLine(line: string, health = false): GpuInfo | undefined {
   const f = line.split(', ');
   if (f.length < GPU_FIELDS.length) return undefined;
   const index = Number(f[0]);
   if (!isFinite(index)) return undefined;
+  const g = base(f, index);
+  if (health && f.length >= GPU_FIELDS.length + GPU_HEALTH_FIELDS.length) {
+    const h = (i: number) => f[GPU_FIELDS.length + i];
+    const mask = h(0)?.trim();
+    g.throttle = mask && /^0x[0-9a-f]+$/i.test(mask) ? parseInt(mask, 16) : NaN;
+    g.smClock = num(h(1));
+    g.smClockMax = num(h(2));
+    g.pcieGen = num(h(3));
+    g.pcieGenMax = num(h(4));
+    g.pcieWidth = num(h(5));
+    g.pcieWidthMax = num(h(6));
+    g.ecc = num(h(7));
+  }
+  return g;
+}
+
+function base(f: string[], index: number): GpuInfo {
   return {
     index,
     uuid: f[1].trim(),

@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as P from '../src/collectors/parsers';
 import { History } from '../src/history';
 import { aggregateUsers } from '../src/collectors/users';
+import * as F from '../src/util/forecast';
 
 const fx = (name: string) => fs.readFileSync(path.join(__dirname, '..', 'test', 'fixtures', name), 'utf8');
 
@@ -106,7 +107,7 @@ test('mounts and statfs math', () => {
 });
 
 test('nvidia-smi gpu and compute apps CSV', () => {
-  const gpus = fx('nvidia_gpu.txt').split('\n').map(P.parseGpuLine).filter(Boolean) as P.GpuInfo[];
+  const gpus = fx('nvidia_gpu.txt').split('\n').map((l) => P.parseGpuLine(l)).filter(Boolean) as P.GpuInfo[];
   assert.ok(gpus.length >= 1);
   assert.equal(gpus[0].index, 0);
   assert.ok(gpus[0].memTotal > 0);
@@ -205,4 +206,76 @@ test('GPU idle rule: desktop memory does not make a GPU busy once processes are 
   assert.equal(isGpuFree({ ...g, memUsed: 6000 }, 500, 5, { noProcessInfo: true }), false, 'most of the memory is in use');
   assert.equal(isGpuFree({ ...g, util: 40 }, 500, 5, { busy: new Set() }), false, 'utilised');
   assert.equal(isGpuFree({ ...g, memUsed: 3, memTotal: 49140, util: 0 }, 500, 5), true, 'idle server GPU');
+});
+
+test('proc/stat: CPU time split (user, system, I/O wait, steal)', () => {
+  const a = P.parseProcStat('cpu  100 0 50 800 40 5 5 0 0 0\ncpu0 100 0 50 800 40 5 5 0 0 0\nbtime 1700000000\n');
+  const b = P.parseProcStat('cpu  160 10 70 890 90 5 15 10 0 0\ncpu0 160 10 70 890 90 5 15 10 0 0\nbtime 1700000000\n');
+  const sp = P.cpuSplitPercent(a.split, b.split)!;
+  // deltas: user 60+10, system 20+0+10, idle 100, iowait 50, steal 10 → total 250
+  const near = (x: number, y: number) => assert.ok(Math.abs(x - y) < 1e-9, `${x} ≈ ${y}`);
+  near(sp.user, 28);
+  near(sp.system, 12);
+  near(sp.iowait, 20);
+  near(sp.steal, 4);
+  assert.equal(P.cpuSplitPercent(undefined, b.split), undefined);
+});
+
+test('diskstats: per-device busy %, IOPS, throughput and latency', () => {
+  const line = (r: number, rs: number, rms: number, w: number, ws: number, wms: number, io: number) => `   8       0 sda ${r} 0 ${rs} ${rms} ${w} 0 ${ws} ${wms} 0 ${io} ${rms + wms}`;
+  const [a] = P.parseDiskstats(line(100, 2000, 300, 50, 1000, 200, 1000));
+  const [b] = P.parseDiskstats(line(300, 6000, 700, 150, 3000, 800, 1500));
+  assert.equal(a.reads, 100);
+  assert.equal(a.ioMs, 1000);
+  const r = P.diskRates(a, b, 1000);
+  assert.equal(r.util, 50);
+  assert.equal(r.rIops, 200);
+  assert.equal(r.wIops, 100);
+  assert.equal(r.rBps, 4000 * 512);
+  assert.equal(r.awaitMs, (400 + 600) / 300);
+  assert.ok(Number.isNaN(P.diskRates(a, a, 1000).awaitMs));
+});
+
+test('pressure, vmstat, /proc/<pid>/io', () => {
+  const io = P.parsePressure('some avg10=12.50 avg60=3.00 avg300=1.00 total=123\nfull avg10=4.25 avg60=1.00 avg300=0.50 total=45\n')!;
+  assert.deepEqual(io, { some: 12.5, full: 4.25, some60: 3 });
+  assert.equal(P.parsePressure('some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n')!.full, undefined);
+  assert.equal(P.parsePressure(''), undefined);
+  assert.deepEqual(P.parseVmstat('nr_free_pages 10\npswpin 5\npswpout 7\noom_kill 1\n', ['pswpin', 'pswpout', 'oom_kill']), { pswpin: 5, pswpout: 7, oom_kill: 1 });
+  assert.deepEqual(P.parsePidIo('rchar: 10\nwchar: 20\nsyscr: 1\nsyscw: 1\nread_bytes: 4096\nwrite_bytes: 8192\ncancelled_write_bytes: 0\n'), { read: 4096, write: 8192 });
+});
+
+test('statfs: inodes when the filesystem has a fixed number of them', () => {
+  const s = P.parseStatF('4096 1000 400 300 1000 100')!;
+  assert.equal(s.inodes!.percent, 90);
+  assert.equal(P.parseStatF('4096 1000 400 300')!.inodes, undefined);
+  assert.equal(P.statfsToUsage(4096, 1000, 400, 300, 0, 0).inodes, undefined); // btrfs, NFS: no fixed count
+});
+
+test('GPU health fields and slowdown reasons', () => {
+  const g = P.parseGpuLine('0, GPU-x, NVIDIA RTX A6000, 100, 90, 8000, 46068, 83, 249, 250, 60, 0x0000000000000024, 1590, 2100, 4, 4, 8, 16, 0', true)!;
+  assert.equal(g.name, 'RTX A6000');
+  assert.equal(g.throttle, 0x24);
+  assert.equal(g.smClock, 1590);
+  assert.equal(g.pcieWidth, 8);
+  assert.equal(g.pcieWidthMax, 16);
+  assert.equal(g.ecc, 0);
+  assert.deepEqual(P.slowdowns(g.throttle), ['power', 'thermal']);
+  assert.deepEqual(P.slowdowns(0x1), []); // idle
+  assert.deepEqual(P.slowdowns(0x8), ['hardware']);
+  assert.deepEqual(P.slowdowns(0x48), ['thermal']); // hardware slowdown caused by heat
+  // without health parsing (older drivers) the fields stay absent
+  assert.equal(P.parseGpuLine('0, GPU-x, A6000, 1, 1, 1, 2, 30, 20, 250, 30')!.throttle, undefined);
+  // "[N/A]" ECC on consumer cards
+  assert.ok(Number.isNaN(P.parseGpuLine('0, GPU-x, A6000, 1, 1, 1, 2, 30, 20, 250, 30, 0x0, 1, 2, 4, 4, 16, 16, [N/A]', true)!.ecc!));
+});
+
+test('disk fill forecast', () => {
+  const pts = (rate: number, minutes: number) => Array.from({ length: minutes * 2 + 1 }, (_, i) => ({ t: i * 30_000, v: 1e9 + rate * i * 30 }));
+  const growing = F.fillEta(pts(10 * 1048576, 20), 3600 * 10 * 1048576)!; // 10 MiB/s, one hour of space left
+  assert.ok(Math.abs(growing.seconds - 3600) < 1);
+  assert.equal(F.fillEta(pts(10 * 1048576, 5), 1e12), undefined); // too short to tell
+  assert.equal(F.fillEta(pts(-1048576, 20), 1e9), undefined); // shrinking
+  assert.equal(F.fillEta(pts(1000, 20), 1e9), undefined); // a trickle
+  assert.equal(F.fillEta(pts(10 * 1048576, 20), 1e15), undefined); // beyond a week
 });

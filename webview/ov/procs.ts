@@ -8,6 +8,7 @@ const SORTS: [ProcSort, OvKey][] = [
   ['cpu', 'sCpu'],
   ['mem', 'sMem'],
   ['gpu', 'sGpu'],
+  ['io', 'sIo'],
   ['time', 'sTime'],
 ];
 const STATE: Record<string, OvKey> = { R: 'stR', S: 'stS', D: 'stD', Z: 'stZ', T: 'stT', t: 'stT', I: 'stI' };
@@ -27,6 +28,8 @@ interface RowUi {
   t: HTMLElement;
   s: HTMLElement;
   sg: HTMLElement;
+  /** Storage I/O (own processes, while active): always shown. */
+  sio: HTMLElement;
   c: HTMLElement;
   m: HTMLElement;
   g: HTMLElement;
@@ -144,10 +147,11 @@ function makeRow(_p: ProcRow, k: string): RowUi {
   const sl = el('div', 'ps', main);
   const s = el('span', '', sl);
   const sg = el('span', 'psg', sl);
+  const sio = el('span', 'pio', sl);
   const c = el('span', 'n c', root);
   const m = el('span', 'n m', root);
   const g = el('span', 'n g', root);
-  return { root, st: stt, t, s, sg, c, m, g };
+  return { root, st: stt, t, s, sg, sio, c, m, g };
 }
 
 function updateRow(r: RowUi, p: ProcRow): void {
@@ -159,7 +163,9 @@ function updateRow(r: RowUi, p: ProcRow): void {
   const age = dur(Math.max(0, (Date.now() - p.start) / 1000));
   setText(r.s, [tr('pidL', p.pid), p.u === undefined ? '' : p.mine ? tr('youTag') : p.u, tr('runFor', age)].filter(Boolean).join(' · '));
   // GPU memory also goes in the second line, for widths where its column is hidden (CSS picks one).
+  // storage I/O (own processes), only while it is happening
   setText(r.sg, p.g == null ? '' : ` · GPU ${fmtMiB(p.g)}`);
+  setText(r.sio, (p.ior ?? 0) + (p.iow ?? 0) >= 1024 ? ` · ${tr('ioRead', fmtB(p.ior ?? 0))}/s ${tr('ioWrite', fmtB(p.iow ?? 0))}/s` : '');
   setText(r.c, fmtCpu(p.cpu));
   setText(r.m, fmtB(p.rss));
   setText(r.g, p.g == null ? '' : fmtMiB(p.g));

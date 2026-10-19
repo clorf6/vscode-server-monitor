@@ -828,8 +828,41 @@ body.vscode-high-contrast-light .row.sel {
   border-color: var(--hovbd);
 }
 .sl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: var(--mut);
   font-size: 12px;
+}
+.slt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* stall pressure (% of time tasks waited for this resource) */
+.stall {
+  flex: none;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mut) 16%, transparent);
+  font-size: 10.5px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stall.w {
+  color: var(--warnc);
+  background: color-mix(in srgb, var(--warnc) 16%, transparent);
+}
+.stall.c {
+  color: var(--errc);
+  background: color-mix(in srgb, var(--errc) 16%, transparent);
+}
+.sc.wide {
+  grid-column: 1 / -1;
 }
 .sv {
   margin: 1px 0 2px;
@@ -903,6 +936,12 @@ body.vscode-high-contrast-light .row.sel {
 }
 .ss.bad {
   color: var(--errc);
+}
+.ss.warn {
+  color: var(--warnc);
+}
+.ss:empty {
+  display: none;
 }
 .sf {
   display: flex;
@@ -1149,6 +1188,35 @@ canvas {
 .iohdr > .ic {
   color: var(--ico);
 }
+.iolist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+.io {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px;
+  border: 1px solid var(--bd);
+  border-radius: var(--r);
+  background: var(--card);
+}
+.iom {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mut);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ps.warn {
+  color: var(--warnc);
+}
+.ps:empty {
+  display: none;
+}
 .iot {
   min-width: 0;
   white-space: pre;
@@ -1358,6 +1426,23 @@ canvas {
   margin-top: 6px;
   color: var(--mut);
   font-size: 11px;
+}
+.g4 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.g4:empty {
+  display: none;
+}
+.tag.warn {
+  color: var(--warnc);
+  background: color-mix(in srgb, var(--warnc) 16%, transparent);
+}
+.tag.crit {
+  color: var(--errc);
+  background: color-mix(in srgb, var(--errc) 16%, transparent);
 }
 .g3:has(.users:empty) .gmeta:empty {
   display: none;

@@ -1,5 +1,20 @@
 # 更新日志 / Changelog
 
+## 0.4.0
+
+- **磁盘 I/O**：概览新增磁盘 I/O 卡片（最忙磁盘的繁忙度、读写速度、每次请求耗时、IOPS，附迷你曲线）；磁盘页列出每块物理磁盘的负载、温度和上面的挂载点；进程页可按磁盘 I/O 排序，自己的进程显示读写速度。
+- **CPU 时间去向**：CPU 卡片显示用户 / 系统 / I/O 等待（以及虚拟机被宿主占用的比例）和 CPU 温度——之前 I/O 等待被算作空闲。
+- **停顿压力**：CPU、内存、磁盘 I/O 卡片显示最近 10 秒任务等待该资源的时间比例（Linux 4.20+ 的 `/proc/pressure`）；内存或 I/O 压力高时提醒。
+- **内存**：显示交换区使用和换页速度；内核因内存不足结束进程（OOM）时提醒。
+- **GPU 健康**：降频原因（功耗墙 / 过热 / 硬件）、核心频率、PCIe 链路、ECC 显存错误；显存错误和 PCIe 降级对所有 GPU 提醒，过热或硬件降频对你在用的 GPU 提醒。
+- **闲置却占着显存的 GPU**：利用率接近 0 却仍有进程占着显存超过 `serverMonitor.gpu.idleHoldMinutes`（默认 30 分钟）时提醒；你自己的进程单独提醒，其他用户的合并为一条；GPU 页显示闲置多久、占用多少。
+- **磁盘**：按最近的增长速度预测多久写满（24 小时内提醒）；显示 inode 使用率，快用完时提醒；CPU / NVMe 温度过高时提醒。
+- 状态栏新增可选的 `io` 项，悬停提示增加最忙磁盘、I/O 等待、停顿压力和 CPU 温度。
+
+---
+
+- Disk I/O card and per-disk load (busy %, throughput, latency, IOPS, temperature), I/O sort and rates for your processes; CPU time split with I/O wait and CPU temperature; stall pressure on the CPU, memory and I/O cards; swap rate and out-of-memory kill alerts; GPU health (slowdown reasons, clocks, PCIe link, ECC errors); alerts for idle GPUs still holding memory; disk-full forecast and inode usage; an `io` status bar item.
+
 ## 0.3.3
 
 - 服务器猫考虑 GPU：所有 GPU 都不空闲且平均利用率 ≥ 50% 时显示“GPU 都被占满了”；只有 CPU、内存和 GPU 都清闲时才“正在打盹”。

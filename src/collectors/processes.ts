@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import { isLinux } from './core';
-import { parseCmdline, parsePidStat, parseProcStat } from './parsers';
+import { parseCmdline, parsePidIo, parsePidStat, parseProcStat } from './parsers';
 import { run } from '../util/exec';
 import { listPids, pidUid, readProc } from '../util/procfs';
 
@@ -14,6 +14,9 @@ export interface ProcInfo {
   rss: number; // bytes
   start: number; // epoch ms
   threads: number;
+  /** Storage read / write, bytes/s: the current user's processes only (others' /proc/<pid>/io is not readable). */
+  ioR?: number;
+  ioW?: number;
 }
 
 export interface ProcSnapshot {
@@ -40,6 +43,9 @@ interface Baseline {
   ticks: number;
   startTicks: number;
   t: number;
+  /** Cumulative storage bytes (own processes). */
+  rb?: number;
+  wb?: number;
 }
 
 /**
@@ -62,6 +68,7 @@ export class ProcessCollector {
   private total = 0;
   private btime = 0;
   private pageSize = 4096;
+  private readonly myUid = process.getuid?.() ?? -1;
 
   constructor() {
     if (!isLinux) return;
@@ -137,7 +144,8 @@ export class ProcessCollector {
         uids.set(pid, uid);
         if (onlyUid !== undefined && uid !== onlyUid) continue;
       }
-      next.set(pid, { ticks: st.ticks, startTicks: st.startTicks, t: now });
+      const base: Baseline = { ticks: st.ticks, startTicks: st.startTicks, t: now };
+      next.set(pid, base);
       // Each baseline carries its own timestamp, so the rate is right however old it is (e.g. other users' processes
       // last read by an "all" scan a minute ago).
       const cpu = p && p.startTicks === st.startTicks && now > p.t ? Math.max(0, ((st.ticks - p.ticks) / HZ / ((now - p.t) / 1000)) * 100) : 0;
@@ -152,6 +160,20 @@ export class ProcessCollector {
         start: (this.btime + st.startTicks / HZ) * 1000,
         threads: st.threads,
       };
+      // own processes: storage I/O rates (one more small read; other users' io files are not readable)
+      if (uid === this.myUid) {
+        const ioText = readProc(`/proc/${pid}/io`);
+        const io = ioText && parsePidIo(ioText);
+        if (io) {
+          base.rb = io.read;
+          base.wb = io.write;
+          if (p && p.startTicks === st.startTicks && p.rb !== undefined && p.wb !== undefined && now > p.t) {
+            const dt = (now - p.t) / 1000;
+            info.ioR = Math.max(0, (io.read - p.rb) / dt);
+            info.ioW = Math.max(0, (io.write - (p.wb ?? 0)) / dt);
+          }
+        }
+      }
       // Only kernel threads with a valid rate may be skipped next time (else they would show 0% for a while).
       if ((st.ppid === 2 || pid === 2) && p && p.startTicks === st.startTicks) kthreads.set(pid, info);
       procs.push(info);

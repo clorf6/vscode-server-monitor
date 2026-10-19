@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-export type StatusItem = 'cpu' | 'mem' | 'gpu' | 'gpuMem' | 'net' | 'load' | 'disk';
+export type StatusItem = 'cpu' | 'mem' | 'gpu' | 'gpuMem' | 'net' | 'load' | 'disk' | 'io';
 
 export interface QuickCommand {
   name: string;
@@ -17,6 +17,8 @@ export interface Config {
   critPercent: number;
   gpuFreeMemoryMiB: number;
   gpuFreeUtilPercent: number;
+  /** Minutes a GPU must sit idle while holding memory before it is flagged (0 = never). */
+  gpuIdleHoldMinutes: number;
   alertsEnabled: boolean;
   alertMemoryPercent: number;
   alertDiskPercent: number;
@@ -50,6 +52,7 @@ export function readConfig(): Config {
     critPercent: c.get('statusBar.critPercent', 95),
     gpuFreeMemoryMiB: c.get('gpu.freeMemoryMiB', 500),
     gpuFreeUtilPercent: c.get('gpu.freeUtilPercent', 5),
+    gpuIdleHoldMinutes: Math.max(0, c.get('gpu.idleHoldMinutes', 30)),
     alertsEnabled: c.get('alerts.enabled', true),
     alertMemoryPercent: c.get('alerts.memoryPercent', 90),
     alertDiskPercent: c.get('alerts.diskPercent', 95),

@@ -60,6 +60,7 @@ export class StatusBar implements vscode.Disposable {
         parts.push(`${l10n.t('VRAM')} ${fmt.pct(total ? (used / total) * 100 : 0)}`);
       } else if (it === 'net' && core) parts.push(`↓${fmt.bytes(core.rx)} ↑${fmt.bytes(core.tx)}`);
       else if (it === 'disk' && home?.percent !== undefined) parts.push(`${l10n.t('DISK')} ${fmt.pct(home.percent)}`);
+      else if (it === 'io' && core?.disks.length) parts.push(`IO ${fmt.pct(Math.max(...core.disks.map((d) => d.util)))}`);
     }
     this.item.text = parts.length ? `$(pulse) ${parts.join('  ')}` : '$(pulse) …';
 
@@ -90,6 +91,14 @@ export class StatusBar implements vscode.Disposable {
           '\n\n',
       );
       md.appendMarkdown(`$(arrow-swap) ${l10n.t('Network')} ↓${fmt.rate(core.rx)} ↑${fmt.rate(core.tx)} · ${l10n.t('Disk IO')} R ${fmt.rate(core.diskRead)} W ${fmt.rate(core.diskWrite)}\n\n`);
+      // the busiest disk, I/O wait, stall pressure, CPU temperature: is the machine struggling?
+      const top = [...core.disks].sort((a, b) => b.util - a.util)[0];
+      const bits: string[] = [];
+      if (top) bits.push(l10n.t('{0} busy {1}', top.dev, fmt.pct(top.util)));
+      if (core.split) bits.push(l10n.t('I/O wait {0}', fmt.pct(core.split.iowait)));
+      if (core.psi) bits.push(l10n.t('stall CPU {0} · memory {1} · I/O {2}', fmt.pct(core.psi.cpu?.some ?? NaN), fmt.pct(core.psi.mem?.some ?? NaN), fmt.pct(core.psi.io?.some ?? NaN)));
+      if (core.temps.cpu !== undefined) bits.push(`CPU ${Math.round(core.temps.cpu)} °C`);
+      if (bits.length) md.appendMarkdown(`$(dashboard) ${bits.join(' · ')}\n\n`);
     }
     const home = this.m.disks.latest?.mounts.find((x) => x.home);
     if (home?.percent !== undefined) md.appendMarkdown(`$(database) ${l10n.t('Home disk')} \`${fmt.escapeMd(home.mount)}\` ${fmt.pct(home.percent)} · ${l10n.t('{0} free', fmt.bytes(home.avail ?? 0))}\n\n`);

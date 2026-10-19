@@ -1,8 +1,8 @@
 // 监控 › 磁盘: every mount with a usage meter (home first, network last, hung mounts flagged), disk I/O rates on top.
 
-import type { DiskRow, OvDisks } from '../overview-protocol';
+import type { DiskRow, IoRow, OvDisks } from '../overview-protocol';
 import { fmtBytes, fmtPct, fmtRate } from '../charts';
-import { actionBar, Bar, bar, cmd, el, emptyBox, flash, G, icon, iconBtn, keyed, mark, nav, num, onRender, PageDef, placeActs, post, rovingList, row, setBar, setEmpty, setText, setTitle, tr } from './core';
+import { actionBar, Bar, bar, cmd, dur, el, emptyBox, flash, G, icon, iconBtn, keyed, mark, nav, num, onRender, PageDef, placeActs, post, rovingList, row, setBar, setEmpty, setText, setTitle, tr } from './core';
 
 let data: OvDisks | undefined;
 let selKey: string | undefined;
@@ -18,9 +18,21 @@ interface RowUi {
   pc: HTMLElement;
   b: Bar;
   s: HTMLElement;
+  /** "Full in about …" while it is filling up. */
+  eta: HTMLElement;
   d?: DiskRow;
 }
 const rows = new Map<string, RowUi>();
+
+interface IoUi {
+  root: HTMLElement;
+  n: HTMLElement;
+  m: HTMLElement;
+  pc: HTMLElement;
+  b: Bar;
+  s: HTMLElement;
+}
+const ioRows = new Map<string, IoUi>();
 
 function build(p: HTMLElement) {
   const io = el('div', 'iohdr', p);
@@ -28,10 +40,12 @@ function build(p: HTMLElement) {
   const ioT = el('span', 'iot', io);
   el('span', 'sp', io);
   iconBtn(io, 'refresh', tr('refresh'), () => cmd('serverMonitor.disk.refresh'));
+  // physical disks: how busy each one is (where the I/O load is)
+  const ioList = el('div', 'iolist', p);
   const list = el('div', 'list rows disks', p);
   const sync = rovingList(list, { onEscape: () => select(undefined) });
   const empty = emptyBox(p, 'db');
-  return { io, ioT, list, sync, empty };
+  return { io, ioT, ioList, list, sync, empty };
 }
 
 function select(k: string | undefined): void {
@@ -48,7 +62,29 @@ function makeRow(_d: DiskRow, k: string): RowUi {
   const pc = el('span', 'dp', l1);
   const b = bar(root, 'bar dbar');
   const s = el('div', 'ps', root);
-  return { root, ic, n, tags, pc, b, s };
+  const eta = el('div', 'ps warn', root);
+  return { root, ic, n, tags, pc, b, s, eta };
+}
+
+function ioRow(parent: Element): IoUi {
+  const root = el('div', 'io', parent);
+  const l1 = el('div', 'd1', root);
+  const n = el('b', 'dn', l1);
+  const m = el('span', 'iom', l1);
+  const pc = el('span', 'dp', l1);
+  const b = bar(root, 'bar dbar');
+  const s = el('div', 'ps', root);
+  return { root, n, m, pc, b, s };
+}
+
+function updateIo(r: IoUi, d: IoRow): void {
+  setText(r.n, d.dev);
+  setText(r.m, d.mounts.join(' '));
+  setText(r.pc, tr('busy', fmtPct(d.util)));
+  setBar(r.b, num(d.util), undefined, 'bar dbar');
+  const lat = d.await == null ? '' : tr('await', d.await.toFixed(d.await >= 10 ? 0 : 1));
+  setText(r.s, [tr('ioRead', fmtRate(d.r)), tr('ioWrite', fmtRate(d.w)), d.iops == null ? '' : tr('iops', Math.round(d.iops)), lat, d.temp == null ? '' : tr('temp', d.temp)].filter(Boolean).join(' · '));
+  setTitle(r.root, d.mounts.length ? `${d.dev}\n${d.mounts.join('\n')}` : d.dev);
 }
 
 function updateRow(r: RowUi, d: DiskRow): void {
@@ -73,12 +109,13 @@ function updateRow(r: RowUi, d: DiskRow): void {
     setText(r.pc, fmtPct(d.percent, 1));
     setBar(r.b, num(d.percent), undefined, 'bar dbar');
     r.b.root.hidden = false;
-    setText(r.s, [tr('usedOfTotal', fmtBytes(d.used), fmtBytes(d.total)), tr('freeOf', fmtBytes(d.avail)), d.fstype].join(' · '));
+    setText(r.s, [tr('usedOfTotal', fmtBytes(d.used), fmtBytes(d.total)), tr('freeOf', fmtBytes(d.avail)), d.fstype, d.inodes == null ? '' : tr('inodes', fmtPct(d.inodes)), d.disks.length ? tr('onDisk', d.disks.join(', ')) : ''].filter(Boolean).join(' · '));
   } else {
     setText(r.pc, d.status === 'pending' ? tr('checking') : bad ? tr('notResp') : '–');
     r.b.root.hidden = true;
     setText(r.s, bad ? tr('diskTimeoutHint') : `${d.fstype} · ${d.device}`);
   }
+  setText(r.eta, d.eta != null && d.status === 'ok' ? `${tr('fillEta', dur(d.eta))} · ${tr('fillRate', fmtBytes((d.rate ?? 0) * 3600))}` : '');
   setTitle(r.root, `${d.mount}\n${d.device} · ${d.fstype}`);
   r.root.classList.toggle('sel', selKey === d.mount);
   r.root.setAttribute('aria-expanded', String(selKey === d.mount));
@@ -105,6 +142,17 @@ function render(): void {
   if (!U) return;
   const c = G.core;
   setText(U.ioT, `${tr('diskIo')}  ${tr('ioRead', fmtRate(c?.dr))} · ${tr('ioWrite', fmtRate(c?.dw))}`);
+  const io = c?.disks ?? [];
+  const seen = new Set<string>();
+  io.forEach((d, i) => {
+    seen.add(d.dev);
+    let r = ioRows.get(d.dev);
+    if (!r) ioRows.set(d.dev, (r = ioRow(U!.ioList)));
+    updateIo(r, d);
+    if (U!.ioList.children[i] !== r.root) U!.ioList.insertBefore(r.root, U!.ioList.children[i] ?? null);
+  });
+  for (const [k, r] of ioRows) if (!seen.has(k)) (r.root.remove(), ioRows.delete(k));
+  U.ioList.hidden = !io.length;
   const d = data;
   const items = d?.mounts ?? [];
   U.list.hidden = !items.length;

@@ -33,7 +33,7 @@ type Msg<T extends OvViewMsg['type']> = Extract<OvViewMsg, { type: T }>;
 
 // ------------------------------------------------------------------ processes
 
-const SORTS: readonly ProcSort[] = ['cpu', 'mem', 'gpu', 'time'];
+const SORTS: readonly ProcSort[] = ['cpu', 'mem', 'gpu', 'io', 'time'];
 export const MAX_PROC_LIMIT = 2000;
 const MAX_CMD = 2000;
 
@@ -81,13 +81,14 @@ export function procsMsg(m: Monitor, q: ProcQuery, sent: Set<string>): OvProcs {
   const match = matcher(m, q.q);
   procs = procs.filter((p) => p.pid !== process.pid && match(p));
   const gmem = gpuMemByPid(m);
-  const key = (p: ProcInfo): number => (q.sort === 'cpu' ? p.cpu : q.sort === 'mem' ? p.rss : q.sort === 'gpu' ? (gmem.get(p.pid) ?? 0) : p.start);
+  const key = (p: ProcInfo): number => (q.sort === 'cpu' ? p.cpu : q.sort === 'mem' ? p.rss : q.sort === 'gpu' ? (gmem.get(p.pid) ?? 0) : q.sort === 'io' ? (p.ioR ?? 0) + (p.ioW ?? 0) : p.start);
   procs.sort((a, b) => key(b) - key(a) || b.rss - a.rss);
   if (sent.size > 5000) sent.clear();
   const rows = procs.slice(0, q.limit).map((p): ProcRow => {
     const k = `${p.pid}:${p.start}`;
     const g = gmem.get(p.pid);
-    const row: ProcRow = { pid: p.pid, start: p.start, ppid: p.ppid, cpu: rnd1(p.cpu), rss: p.rss, g: g === undefined ? null : Math.round(g), st: p.state, mine: p.uid === myUid, threads: p.threads };
+    const io = (v: number | undefined) => (v === undefined ? null : Math.round(v));
+    const row: ProcRow = { pid: p.pid, start: p.start, ppid: p.ppid, cpu: rnd1(p.cpu), rss: p.rss, g: g === undefined ? null : Math.round(g), ior: io(p.ioR), iow: io(p.ioW), st: p.state, mine: p.uid === myUid, threads: p.threads };
     if (q.scope === 'all') row.u = m.names.name(p.uid);
     if (!sent.has(k)) {
       const cmd = m.procC.cmdline(p);
@@ -151,10 +152,17 @@ export function sortedMounts(mounts: MountUsage[]): MountUsage[] {
 export function disksMsg(m: Monitor): OvDisks {
   const d = m.disks.latest;
   const n = (v: number | undefined) => (v === undefined || !isFinite(v) ? null : v);
-  const mounts = sortedMounts(d?.mounts ?? []).map((x) => ({
-    mount: x.mount, device: x.device, fstype: x.fstype, status: x.status, network: x.network, home: x.home,
-    used: n(x.used), total: n(x.total), avail: n(x.avail), percent: x.percent === undefined ? null : rnd1(x.percent),
-  }));
+  const mounts = sortedMounts(d?.mounts ?? []).map((x) => {
+    const eta = x.status === 'ok' ? m.fillEta(x) : undefined;
+    return {
+      mount: x.mount, device: x.device, fstype: x.fstype, status: x.status, network: x.network, home: x.home,
+      used: n(x.used), total: n(x.total), avail: n(x.avail), percent: x.percent === undefined ? null : rnd1(x.percent),
+      inodes: x.inodes ? rnd1(x.inodes.percent) : null,
+      eta: eta ? Math.round(eta.seconds) : null,
+      rate: eta ? Math.round(eta.rate) : null,
+      disks: m.disksOf(x),
+    };
+  });
   return { type: 'disks', supported: d ? d.supported : isLinux, loading: !d, mounts };
 }
 
